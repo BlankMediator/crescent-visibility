@@ -84,11 +84,15 @@ for day in dates:
             if model == "ilyas":
                 vis_scores[model] = ilyas_model(results['moon_altitude_deg'], results['moon_sun_separation_deg'])
             elif model == "yallop":
-                arc_v = results['moon_sun_separation_deg']
-                diff_alt = results['moon_altitude_deg'] - results['sun_altitude_deg']
-                vis_scores[model] = yallop_model(arc_v, diff_alt)
+                vis_scores[model] = yallop_model(
+                    results['moon_arc_of_vision_deg'],
+                    results['moon_crescent_width_arcmin'],
+                )
             elif model == "odeh":
-                vis_scores[model] = odeh_model(results['moon_sun_separation_deg'], results['moon_age_days'])
+                vis_scores[model] = odeh_model(
+                    results['moon_arc_of_vision_deg'],
+                    results['moon_crescent_width_arcmin'],
+                )
             elif model == "shaukat":
                 vis_scores[model] = shaukat_model(results['moon_sun_separation_deg'], results['moon_altitude_deg'], results['moon_age_days'])
             elif model == "saao":

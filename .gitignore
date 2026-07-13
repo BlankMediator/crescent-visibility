@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+.streamlit/
+.venv/
+de421.bsp
+cartopy_data/
