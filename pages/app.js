@@ -34,6 +34,20 @@ const DEFINITIONS = {
 
 const ROBINSON_X = [1.0, 0.9986, 0.9954, 0.99, 0.9822, 0.973, 0.96, 0.9427, 0.9216, 0.8962, 0.8679, 0.835, 0.7986, 0.7597, 0.7186, 0.6732, 0.6213, 0.5722, 0.5322];
 const ROBINSON_Y = [0.0, 0.062, 0.124, 0.186, 0.248, 0.31, 0.372, 0.434, 0.4958, 0.5571, 0.6176, 0.6769, 0.7346, 0.7903, 0.8435, 0.8936, 0.9394, 0.9761, 1.0];
+const FIRST_STATUS = ["ok", "moonset_before_sunset", "before_conjunction", "no_event"];
+const FIRST_BANDS = [
+  { label: "F: Below Danjon limit", color: "#ffffff" },
+  { label: "E: Not visible by conventional telescope", color: "#ff7f50" },
+  { label: "D: Only visible with binoculars or telescope", color: "#fff200" },
+  { label: "C: Visible after found with optical aid", color: "#78f06f" },
+  { label: "B: Visible under perfect atmospheric conditions", color: "#a7ff4f" },
+  { label: "A: Easily visible to the unaided eye", color: "#00f000" },
+];
+const FIRST_MASKS = {
+  moonset_before_sunset: { label: "Moonset before sunset", color: "#f00000" },
+  before_conjunction: { label: "Before conjunction", color: "#9c1bb4" },
+  no_event: { label: "No local sunset/moonset event", color: "#94a3b8" },
+};
 
 function fmt(value, digits = 2) {
   if (value === null || value === undefined || Number.isNaN(value)) return "--";
@@ -77,6 +91,7 @@ function metricLabel(row, metric = state.metric) {
 }
 
 function bandName(row, metric = state.metric) {
+  if (row?.first_visibility_status !== undefined) return firstBandName(row);
   const score = metricValue(row, metric);
   if (metric === "yallop") {
     return ["Not visible", "Photographic only", "Not visible by telescope", "Needs optical aid", "May need optical aid", "Visible in perfect conditions", "Easily visible"][score] || "--";
@@ -85,12 +100,25 @@ function bandName(row, metric = state.metric) {
 }
 
 function colorFor(row, metric = state.metric) {
+  if (row?.first_visibility_status !== undefined) return firstColorFor(row);
   const score = metricValue(row, metric);
   if (score === null || score === undefined) return "#94a3b8";
   if (metric === "yallop") {
     return ["#7f1d1d", "#b42318", "#dc2626", "#f97316", "#eab308", "#2f9e44", "#087443"][score] || "#94a3b8";
   }
   return ["#7f1d1d", "#f97316", "#eab308", "#087443"][score] || "#94a3b8";
+}
+
+function firstBandName(row) {
+  const status = FIRST_STATUS[row.first_visibility_status] || "no_event";
+  if (status !== "ok") return FIRST_MASKS[status]?.label || "No first-visibility sample";
+  return FIRST_BANDS[row.van_gent_score]?.label || "--";
+}
+
+function firstColorFor(row) {
+  const status = FIRST_STATUS[row.first_visibility_status] || "no_event";
+  if (status !== "ok") return FIRST_MASKS[status]?.color || "#94a3b8";
+  return FIRST_BANDS[row.van_gent_score]?.color || "#94a3b8";
 }
 
 function compactToRow(point, values, minute = state.minute) {
@@ -110,6 +138,30 @@ function compactToRow(point, values, minute = state.minute) {
     moon_age_days: values[11],
     best_minute: minute,
     utc_minute: minute,
+  };
+}
+
+function compactToFirstVisibilityRow(point, values) {
+  return {
+    ...point,
+    first_visibility_status: values[0],
+    van_gent_score: values[1],
+    yallop_q: values[2],
+    moon_altitude_deg: values[3],
+    sun_altitude_deg: values[4],
+    moon_sun_separation_deg: values[5],
+    moon_arc_of_vision_deg: values[6],
+    moon_relative_azimuth_deg: values[7],
+    moon_crescent_width_arcmin: values[8],
+    moon_illumination_fraction: values[9],
+    moon_age_hours: values[10],
+    best_datetime_utc: values[11],
+    sunset_utc: values[12],
+    moonset_utc: values[13],
+    moon_birth_utc: values[14],
+    moon_lag_minutes: values[15],
+    utc_date: String(values[11] || "").slice(0, 10) || state.date,
+    utc_minute: minuteFromUtcText(values[11]),
   };
 }
 
@@ -136,12 +188,24 @@ function nearestMapMinute(minute) {
   return minutes.reduce((best, item) => Math.abs(item - minute) < Math.abs(best - minute) ? item : best, minutes[0]);
 }
 
+function minuteFromUtcText(utcText) {
+  if (!utcText) return null;
+  const dt = new Date(utcText);
+  if (Number.isNaN(dt.getTime())) return null;
+  return dt.getUTCHours() * 60 + dt.getUTCMinutes();
+}
+
 function mapRowsForUtc(dateText, minute) {
   const day = state.data.map_values[dateText];
   if (!day) return [];
   const mapMinute = nearestMapMinute(minute);
   const values = day[String(mapMinute)] || [];
   return values.map((value, index) => ({ ...compactToRow(state.data.points[index], value, mapMinute), utc_date: dateText, utc_minute: mapMinute }));
+}
+
+function firstVisibilityRows() {
+  const values = state.data.first_visibility_values?.[state.date] || [];
+  return values.map((value, index) => compactToFirstVisibilityRow(state.data.points[index], value));
 }
 
 function instantRows() {
@@ -214,6 +278,7 @@ function customLocationRow(dateText, minute) {
 }
 
 function currentMapRows() {
+  if (state.mapView === "first") return firstVisibilityRows();
   if (state.mapView === "day") return dayRows();
   const rows = instantRows();
   if (state.mapView !== "slice") return rows;
@@ -874,6 +939,21 @@ function attachMapTooltip() {
     tooltip.hidden = false;
     tooltip.style.left = `${Math.min(nearest.x + 16, canvas.clientWidth - 300)}px`;
     tooltip.style.top = `${Math.max(nearest.y + 16, 16)}px`;
+    if (p.first_visibility_status !== undefined) {
+      tooltip.innerHTML = `
+        <strong>${p.name}</strong><br>
+        ${p.type} point: ${fmt(p.latitude, 1)}, ${fmt(p.longitude, 1)}<br>
+        First visibility Yallop: ${firstBandName(p)}<br>
+        Best time UTC ${p.best_datetime_utc || "--"}<br>
+        Sunset ${displayTime(p.sunset_utc)}; moonset ${displayTime(p.moonset_utc)}<br>
+        Moon birth ${displayTime(p.moon_birth_utc)}<br>
+        q ${fmt(p.yallop_q, 3)}; age ${fmt(p.moon_age_hours, 1)} h<br>
+        Moon alt ${fmt(p.moon_altitude_deg, 1)} deg; Sun alt ${fmt(p.sun_altitude_deg, 1)} deg<br>
+        ARCV ${fmt(p.moon_arc_of_vision_deg, 2)} deg; DAZ ${fmt(p.moon_relative_azimuth_deg, 2)} deg<br>
+        W ${fmt(p.moon_crescent_width_arcmin, 3)} arcmin
+      `;
+      return;
+    }
     tooltip.innerHTML = `
       <strong>${p.name}</strong><br>
       ${p.type} point: ${fmt(p.latitude, 1)}, ${fmt(p.longitude, 1)}<br>
@@ -1009,6 +1089,12 @@ function renderCalendar() {
 }
 
 function renderLegend() {
+  if (state.mapView === "first") {
+    const bands = [...FIRST_BANDS].reverse().map((band) => `<span><i style="background:${band.color}; border:1px solid #94a3b8"></i>${band.label}</span>`).join("");
+    const masks = Object.values(FIRST_MASKS).map((mask) => `<span><i style="background:${mask.color}"></i>${mask.label}</span>`).join("");
+    el("legend").innerHTML = `${bands}${masks}`;
+    return;
+  }
   const scores = state.metric === "yallop" ? [6, 5, 4, 3, 2, 1, 0] : [3, 2, 1, 0];
   el("legend").innerHTML = scores.map((score) => {
     const row = state.metric === "yallop" ? { yallop_score: score } : { odeh_score: score };
@@ -1021,11 +1107,13 @@ function renderMapText() {
     instant: "Selected Date + Time Visibility",
     day: "Best Visibility Across Selected Date",
     slice: "Selected Date + Time Across All Lat/Lon",
+    first: "First Visibility Yallop Map",
   };
   const subtitles = {
     instant: "Country, state, capital city, major city, and grid points at the selected instant.",
     day: "Each point shows its best visibility band across the selected UTC date from 00:00 to 24:00.",
     slice: "All precomputed country, state, capital, city, and 15 degree grid points at the selected UTC instant.",
+    first: "Our Van Gent-style layer: Yallop at sunset plus 4/9 of the local sunset-to-moonset interval, with conjunction and moonset masks.",
   };
   el("mapTitle").textContent = titles[state.mapView];
   el("mapSubtitle").textContent = subtitles[state.mapView];

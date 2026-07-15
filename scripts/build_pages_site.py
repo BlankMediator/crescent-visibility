@@ -217,6 +217,83 @@ def compact_row(row):
     ]
 
 
+def yallop_van_gent_score(q):
+    if q is None or not math.isfinite(float(q)):
+        return 0
+    q = float(q)
+    if q > 0.216:
+        return 5
+    if q > -0.014:
+        return 4
+    if q > -0.160:
+        return 3
+    if q > -0.232:
+        return 2
+    if q > -0.293:
+        return 1
+    return 0
+
+
+def solar_utc_offset(longitude):
+    return max(-12.0, min(14.0, float(longitude) / 15.0))
+
+
+def compact_first_visibility_row(point, local_day):
+    offset = solar_utc_offset(point["longitude"])
+    events = get_solar_lunar_events(
+        point["latitude"],
+        point["longitude"],
+        point["elevation_m"],
+        local_day.year,
+        local_day.month,
+        local_day.day,
+        utc_offset_hours=offset,
+    )
+    sunset_dt = parse_utc(events.get("sunset_utc"))
+    moonset_dt = parse_utc(events.get("moonset_utc"))
+    if not sunset_dt or not moonset_dt:
+        return [3, 0, None, None, None, None, None, None, None, None, None, None, events.get("sunset_utc"), events.get("moonset_utc"), None, None]
+
+    lag_minutes = (moonset_dt - sunset_dt).total_seconds() / 60.0
+    best_dt = sunset_dt + (moonset_dt - sunset_dt) * (4.0 / 9.0)
+    phase_events = get_lunar_phase_events(
+        best_dt.year,
+        best_dt.month,
+        best_dt.day,
+        best_dt.hour,
+        best_dt.minute,
+    )
+    birth_dt = parse_utc(phase_events.get("previous_new_moon_utc"))
+    if moonset_dt <= sunset_dt:
+        status = 1
+    elif birth_dt and best_dt < birth_dt:
+        status = 2
+    else:
+        status = 0
+
+    row = dict(evaluate_datetime_fast(point["latitude"], point["longitude"], point["elevation_m"], best_dt))
+    q = row.get("yallop_q")
+    age_hours = (best_dt - birth_dt).total_seconds() / 3600.0 if birth_dt else None
+    return [
+        status,
+        yallop_van_gent_score(q),
+        finite_or_none(q),
+        finite_or_none(row.get("moon_altitude_deg")),
+        finite_or_none(row.get("sun_altitude_deg")),
+        finite_or_none(row.get("moon_sun_separation_deg")),
+        finite_or_none(row.get("moon_arc_of_vision_deg")),
+        finite_or_none(row.get("moon_relative_azimuth_deg")),
+        finite_or_none(row.get("moon_crescent_width_arcmin")),
+        finite_or_none(row.get("moon_illumination_fraction"), 5),
+        finite_or_none(age_hours),
+        best_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        events.get("sunset_utc"),
+        events.get("moonset_utc"),
+        phase_events.get("previous_new_moon_utc"),
+        finite_or_none(lag_minutes),
+    ]
+
+
 def init_worker(points):
     global WORKER_POINTS
     WORKER_POINTS = points
@@ -237,6 +314,34 @@ def map_values_for_instant(day_text, minute):
         )
         values.append(compact_row(row))
     return day_text, minute, values
+
+
+def first_visibility_values_for_day(day_text):
+    local_day = date.fromisoformat(day_text)
+    values = [compact_first_visibility_row(point, local_day) for point in WORKER_POINTS]
+    return day_text, values
+
+
+def choose_workers():
+    configured_workers = os.environ.get("HILAAL_WORKERS")
+    return int(configured_workers) if configured_workers else max(1, min(8, (os.cpu_count() or 2) - 1))
+
+
+def build_first_visibility_values(points, date_texts, workers):
+    first_visibility_values = {day_text: [] for day_text in date_texts}
+    print(f"Building {len(date_texts)} first-visibility Yallop snapshots for {len(points)} points with {workers} workers...", flush=True)
+    if workers == 1:
+        init_worker(points)
+        for day_text in date_texts:
+            result_day, values = first_visibility_values_for_day(day_text)
+            first_visibility_values[result_day] = values
+    else:
+        with ProcessPoolExecutor(max_workers=workers, initializer=init_worker, initargs=(points,)) as executor:
+            futures = [executor.submit(first_visibility_values_for_day, day_text) for day_text in date_texts]
+            for future in as_completed(futures):
+                result_day, values = future.result()
+                first_visibility_values[result_day] = values
+    return first_visibility_values
 
 
 def location_rows_for_location(loc, date_texts, minutes, minute_labels):
@@ -403,7 +508,7 @@ def build_dataset():
     points = build_points(country_points)
     locations = build_locations()
 
-    workers = max(1, min(8, (os.cpu_count() or 2) - 1))
+    workers = choose_workers()
     date_texts = [day.isoformat() for day in dates]
     print(f"Building {len(locations)} preset location tables with {workers} workers...", flush=True)
     location_rows = {}
@@ -435,6 +540,8 @@ def build_dataset():
                 result_day, result_minute, values = future.result()
                 map_values[result_day][str(result_minute)] = values
 
+    first_visibility_values = build_first_visibility_values(points, date_texts, workers)
+
     return {
         "generated_at_utc": generated_at.isoformat() + "Z",
         "source": "Generated from the repository Python Skyfield/Yallop/Odeh engine.",
@@ -460,8 +567,27 @@ def build_dataset():
             "moon_illumination_fraction",
             "moon_age_days",
         ],
+        "first_visibility_schema": [
+            "status_code",
+            "van_gent_score",
+            "yallop_q",
+            "moon_altitude_deg",
+            "sun_altitude_deg",
+            "moon_sun_separation_deg",
+            "moon_arc_of_vision_deg",
+            "moon_relative_azimuth_deg",
+            "moon_crescent_width_arcmin",
+            "moon_illumination_fraction",
+            "moon_age_hours",
+            "best_datetime_utc",
+            "sunset_utc",
+            "moonset_utc",
+            "moon_birth_utc",
+            "moon_lag_minutes",
+        ],
         "points": points,
         "map_values": map_values,
+        "first_visibility_values": first_visibility_values,
         "countries": country_geojson,
     }
 
@@ -473,9 +599,43 @@ def copy_docs():
     target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
 
 
+def update_existing_first_visibility_payload():
+    path = DATA_DIR / "site_data.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    workers = choose_workers()
+    payload["first_visibility_schema"] = [
+        "status_code",
+        "van_gent_score",
+        "yallop_q",
+        "moon_altitude_deg",
+        "sun_altitude_deg",
+        "moon_sun_separation_deg",
+        "moon_arc_of_vision_deg",
+        "moon_relative_azimuth_deg",
+        "moon_crescent_width_arcmin",
+        "moon_illumination_fraction",
+        "moon_age_hours",
+        "best_datetime_utc",
+        "sunset_utc",
+        "moonset_utc",
+        "moon_birth_utc",
+        "moon_lag_minutes",
+    ]
+    payload["first_visibility_values"] = build_first_visibility_values(payload["points"], payload["dates"], workers)
+    payload["first_visibility_source"] = "Generated with Yallop at sunset + 4/9 of local sunset-to-moonset interval, with conjunction and moonset masks."
+    path.write_text(
+        json.dumps(payload, ensure_ascii=True, separators=(",", ":")),
+        encoding="utf-8",
+    )
+
+
 def main():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     copy_docs()
+    if os.environ.get("HILAAL_INCREMENTAL_FIRST") == "1":
+        update_existing_first_visibility_payload()
+        print(f"Updated first-visibility layer in {DATA_DIR / 'site_data.json'}")
+        return
     payload = build_dataset()
     (DATA_DIR / "site_data.json").write_text(
         json.dumps(payload, ensure_ascii=True, separators=(",", ":")),

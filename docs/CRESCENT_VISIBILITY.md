@@ -220,7 +220,7 @@ Odeh bands:
 
 ## Maps And Point Types
 
-The public site renders three map modes:
+The public site renders four map modes:
 
 - Best On Selected Date: each point is shaded by its best visibility band over the selected UTC
   date from 00:00 through the precomputed hourly samples for that date. Tooltips show the UTC hour
@@ -229,6 +229,40 @@ The public site renders three map modes:
   "where would the crescent be visible at this exact moment" mode.
 - Date + Time Across Lat/Lon: grid points near the selected latitude and longitude are emphasized,
   with latitude and longitude sweep charts shown below the map.
+- First Visibility Yallop: a separate Van Gent-style view for comparison with traditional first
+  lunar-crescent visibility charts. For each point and selected local date, the app calculates
+  local sunset and moonset, evaluates Yallop at:
+
+```text
+best time = sunset + 4/9 * (moonset - sunset)
+```
+
+  It then applies classic first-visibility masks:
+
+  - red: moonset before sunset,
+  - purple: best time before astronomical conjunction,
+  - grey: no local sunset/moonset event was available for that point/date.
+
+  This view uses classic Yallop A-F presentation:
+
+  | Band | Meaning | q range |
+  | --- | --- | --- |
+  | A | Easily visible to the unaided eye | q > 0.216 |
+  | B | Visible under perfect atmospheric conditions | -0.014 < q <= 0.216 |
+  | C | Visible to the unaided eye after found with optical aid | -0.160 < q <= -0.014 |
+  | D | Only visible with binoculars or conventional telescopes | -0.232 < q <= -0.160 |
+  | E | Not visible with conventional telescopes | -0.293 < q <= -0.232 |
+  | F | Below Danjon-style visibility limit | q <= -0.293 |
+
+  This differs from the normal interactive "Best On Selected Date" map, which scans hourly UTC
+  samples and is meant as an exploratory view rather than a reproduction of a printed first
+  visibility chart.
+
+  Reference convention: R. H. van Gent's lunar-crescent visibility maps at
+  `https://webspace.science.uu.nl/~gent0113/islam/` use Yallop-style first-visibility bands,
+  the 4/9 sunset-to-moonset best-time convention, and explicit masks for pre-conjunction and
+  moonset-before-sunset areas. Hilaal's fourth view is an independent implementation of that
+  convention using this repository's Skyfield calculations and point grid.
 
 Map calculation points include:
 
