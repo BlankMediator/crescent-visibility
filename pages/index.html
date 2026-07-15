@@ -22,8 +22,7 @@
       <section class="controls" aria-label="Controls">
         <label class="search-field">
           Search location
-          <input id="locationSearch" type="search" list="locationSuggestions" placeholder="City, country, suburb, or complete address">
-          <datalist id="locationSuggestions"></datalist>
+          <input id="locationSearch" type="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="City, country, suburb, or complete address">
           <div id="remoteSuggestions" class="suggestions" hidden></div>
           <small id="locationSearchStatus"></small>
         </label>
@@ -65,8 +64,8 @@
         <label>
           Display time zone
           <select id="timezoneSelect">
-            <option value="location">Selected location</option>
             <option value="browser">Browser local</option>
+            <option value="location">Selected location</option>
             <option value="utc">UTC</option>
           </select>
         </label>
@@ -147,15 +146,15 @@
       <section class="split">
         <div class="panel">
           <div class="panel-title">
-            <h2>Latitude Sweep</h2>
-            <p>Same longitude, selected date and time.</p>
+            <h2>Latitude Bands</h2>
+            <p>All longitudes, selected date and time.</p>
           </div>
           <svg id="latChart" viewBox="0 0 760 260" role="img" aria-label="Latitude sweep"></svg>
         </div>
         <div class="panel">
           <div class="panel-title">
-            <h2>Longitude Sweep</h2>
-            <p>Same latitude, selected date and time.</p>
+            <h2>Longitude Bands</h2>
+            <p>All latitudes, selected date and time.</p>
           </div>
           <svg id="lonChart" viewBox="0 0 760 260" role="img" aria-label="Longitude sweep"></svg>
         </div>

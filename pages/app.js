@@ -6,11 +6,13 @@ const state = {
   metric: "yallop",
   projection: "equirectangular",
   mapView: "day",
-  timezoneMode: "location",
+  timezoneMode: "browser",
   browserTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Browser local",
   browserOffsetHours: -new Date().getTimezoneOffset() / 60,
   customLocation: null,
   searchTimer: null,
+  lastLocalSuggestions: [],
+  today: new Date().toLocaleDateString("en-CA"),
 };
 
 const el = (id) => document.getElementById(id);
@@ -125,6 +127,10 @@ function nearestMinute(minute) {
   return state.data.minutes.reduce((best, item) => Math.abs(item - minute) < Math.abs(best - minute) ? item : best, state.data.minutes[0]);
 }
 
+function minuteAtOrAfter(minute) {
+  return state.data.minutes.find((item) => item >= minute) ?? state.data.minutes[state.data.minutes.length - 1];
+}
+
 function nearestMapMinute(minute) {
   const minutes = state.data.map_minutes || state.data.minutes;
   return minutes.reduce((best, item) => Math.abs(item - minute) < Math.abs(best - minute) ? item : best, minutes[0]);
@@ -217,22 +223,11 @@ function currentMapRows() {
 function setupControls() {
   const data = state.data;
   const locationSelect = el("locationSelect");
-  const suggestions = el("locationSuggestions");
   data.locations.forEach((location) => {
     const option = document.createElement("option");
     option.value = location.name;
     option.textContent = location.name;
     locationSelect.appendChild(option);
-
-    const suggestion = document.createElement("option");
-    suggestion.value = location.name;
-    suggestions.appendChild(suggestion);
-  });
-
-  data.points.filter((point) => point.type !== "grid").slice(0, 260).forEach((point) => {
-    const suggestion = document.createElement("option");
-    suggestion.value = point.name;
-    suggestions.appendChild(suggestion);
   });
 
   data.dates.forEach((date) => {
@@ -258,10 +253,12 @@ function setupControls() {
 
   state.location = data.locations[0].name;
   applyBrowserDateTime();
+  setPreferredSightingMinute();
 
   locationSelect.value = state.location;
   el("dateSelect").value = state.date;
   el("metricSelect").value = state.metric;
+  el("timezoneSelect").value = state.timezoneMode;
   el("timeSlider").min = "0";
   el("timeSlider").max = String(data.minutes.length - 1);
   syncTimeControls();
@@ -271,6 +268,7 @@ function setupControls() {
     state.location = event.target.value;
     el("remoteSuggestions").hidden = true;
     event.target.blur();
+    setPreferredSightingMinute();
     render();
   });
   el("locationSearch").addEventListener("change", applyLocationSearch);
@@ -283,6 +281,7 @@ function setupControls() {
   });
   el("dateSelect").addEventListener("change", (event) => {
     state.date = event.target.value;
+    setPreferredSightingMinute();
     render();
   });
   el("metricSelect").addEventListener("change", (event) => {
@@ -319,11 +318,22 @@ function setupControls() {
 
 function applyBrowserDateTime() {
   const now = new Date();
-  const today = now.toISOString().slice(0, 10);
-  state.date = closestDate(today);
+  state.today = now.toLocaleDateString("en-CA");
+  state.date = closestDate(state.today);
   state.minute = nearestMinute(now.getHours() * 60 + now.getMinutes());
   state.timezoneMode = "browser";
   el("timezoneSelect").value = "browser";
+}
+
+function setPreferredSightingMinute(dateText = state.date) {
+  const eventRow = selectedEventRow(dateText, state.data.minutes[0]);
+  const sunsetMinute = localEventMinute(eventRow.sunset_utc, dateText);
+  const moonsetMinute = localEventMinute(eventRow.moonset_utc, dateText);
+  if (sunsetMinute === null || sunsetMinute === undefined) return;
+  const afterSunset = minuteAtOrAfter(sunsetMinute);
+  const beforeMoonset = state.data.minutes.find((minute) => minute >= sunsetMinute && (moonsetMinute === null || moonsetMinute === undefined || minute <= moonsetMinute));
+  state.minute = beforeMoonset ?? afterSunset;
+  syncTimeControls();
 }
 
 function closestDate(dateText) {
@@ -365,10 +375,60 @@ function scheduleRemoteSearch(event) {
   window.clearTimeout(state.searchTimer);
   const query = event.target.value.trim();
   if (query.length < 3) {
+    state.lastLocalSuggestions = [];
     el("remoteSuggestions").hidden = true;
     return;
   }
+  renderLocalSuggestions(query);
   state.searchTimer = window.setTimeout(() => fetchRemoteSuggestions(query), 350);
+}
+
+function localSuggestionItems(query) {
+  const q = query.toLowerCase();
+  const locations = state.data.locations
+    .filter((item) => `${item.name} ${item.search}`.toLowerCase().includes(q))
+    .slice(0, 6)
+    .map((item) => ({ type: "location", label: item.name, detail: item.country || "Preset location", item }));
+  const points = state.data.points
+    .filter((item) => item.type !== "grid" && `${item.name} ${item.country} ${item.search}`.toLowerCase().includes(q))
+    .slice(0, 6)
+    .map((item) => ({ type: "point", label: item.name, detail: `${item.type} point`, item }));
+  return [...locations, ...points].slice(0, 8);
+}
+
+function renderLocalSuggestions(query) {
+  const items = localSuggestionItems(query);
+  state.lastLocalSuggestions = items;
+  const box = el("remoteSuggestions");
+  if (!items.length) {
+    box.hidden = true;
+    return;
+  }
+  box.innerHTML = items.map((entry, index) => `<button type="button" data-local-index="${index}">${entry.label}<small>${entry.detail}</small></button>`).join("");
+  box.hidden = false;
+  box.querySelectorAll("button").forEach((button) => button.addEventListener("click", () => selectLocalSuggestion(items[Number(button.dataset.localIndex)])));
+}
+
+function selectLocalSuggestion(entry) {
+  if (!entry) return;
+  if (entry.type === "location") {
+    state.customLocation = null;
+    state.location = entry.item.name;
+    el("locationSelect").value = state.location;
+    el("locationSearch").value = entry.item.name;
+    el("locationSearchStatus").textContent = `Using ${entry.item.name}`;
+  } else {
+    const nearest = nearestLocation(entry.item.latitude, entry.item.longitude);
+    state.customLocation = null;
+    state.location = nearest.name;
+    el("locationSelect").value = state.location;
+    el("locationSearch").value = entry.item.name;
+    el("locationSearchStatus").textContent = `${entry.item.name} is a map calculation point; using nearest preset ${nearest.name} for event times.`;
+  }
+  el("remoteSuggestions").hidden = true;
+  el("locationSearch").blur();
+  setPreferredSightingMinute();
+  render();
 }
 
 async function fetchRemoteSuggestions(query, autoPick = false) {
@@ -395,12 +455,17 @@ function featureName(feature) {
 
 function renderRemoteSuggestions(features) {
   const box = el("remoteSuggestions");
-  box.innerHTML = features.map((feature, index) => {
+  const existing = box.hidden ? "" : box.innerHTML;
+  const remote = features.map((feature, index) => {
     const p = feature.properties || {};
     return `<button type="button" data-index="${index}">${featureName(feature)}<small>${[p.osm_value, p.postcode].filter(Boolean).join(" ")}</small></button>`;
   }).join("");
+  box.innerHTML = `${existing}${existing ? '<div class="suggestion-divider">Address suggestions</div>' : ""}${remote}`;
   box.hidden = false;
-  box.querySelectorAll("button").forEach((button) => button.addEventListener("click", () => selectRemoteFeature(features[Number(button.dataset.index)])));
+  box.querySelectorAll("button[data-local-index]").forEach((button) => {
+    button.addEventListener("click", () => selectLocalSuggestion(state.lastLocalSuggestions[Number(button.dataset.localIndex)]));
+  });
+  box.querySelectorAll("button[data-index]").forEach((button) => button.addEventListener("click", () => selectRemoteFeature(features[Number(button.dataset.index)])));
 }
 
 function selectRemoteFeature(feature) {
@@ -422,6 +487,7 @@ function selectRemoteFeature(feature) {
   el("remoteSuggestions").hidden = true;
   el("locationSearch").blur();
   el("locationSearchStatus").textContent = `Using address result near ${fmt(lat, 4)}, ${fmt(lon, 4)}; time zone uses your browser offset.`;
+  setPreferredSightingMinute();
   render();
 }
 
@@ -448,7 +514,7 @@ function setTimeByMinute(minute) {
 function useCurrent() {
   applyBrowserDateTime();
   el("dateSelect").value = state.date;
-  syncTimeControls();
+  setPreferredSightingMinute();
   if (navigator.geolocation) {
     navigator.geolocation.getCurrentPosition((pos) => {
       const nearest = nearestLocation(pos.coords.latitude, pos.coords.longitude);
@@ -465,6 +531,7 @@ function useCurrent() {
       state.location = nearest.name;
       setCustomLocationOption(state.customLocation.name);
       el("locationSearchStatus").textContent = `Using browser position; nearest preset is ${nearest.name}`;
+      setPreferredSightingMinute();
       render();
     }, () => render(), { enableHighAccuracy: false, timeout: 6000 });
   } else {
@@ -832,6 +899,7 @@ function chart(svg, rows, xLabels, valueFn = (row) => metricValue(row), options 
   const min = Math.min(0, ...values);
   const x = (i) => pad.left + i * ((width - pad.left - pad.right) / Math.max(1, rows.length - 1));
   const y = (v) => height - pad.bottom - ((v - min) / Math.max(1, max - min)) * (height - pad.top - pad.bottom);
+  const path = rows.map((row, i) => `${i === 0 ? "M" : "L"} ${x(i)} ${y(valueFn(row) || 0)}`).join(" ");
   const circles = rows.map((row, i) => `<circle cx="${x(i)}" cy="${y(valueFn(row) || 0)}" r="4" fill="${colorFor(row)}"><title>${xLabels[i]}: ${bandName(row)}</title></circle>`).join("");
   const labels = xLabels.map((label, i) => i % Math.ceil(xLabels.length / 8) === 0 ? `<text x="${x(i)}" y="${height - 18}" text-anchor="middle" font-size="11" fill="#596675">${label}</text>` : "").join("");
   const eventMarkers = (options.events || []).map((event) => {
@@ -852,10 +920,41 @@ function chart(svg, rows, xLabels, valueFn = (row) => metricValue(row), options 
     <line x1="${pad.left}" y1="${height - pad.bottom}" x2="${width - pad.right}" y2="${height - pad.bottom}" stroke="#cbd5e1"/>
     <line x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${height - pad.bottom}" stroke="#cbd5e1"/>
     ${eventMarkers}
+    <path d="${path}" fill="none" stroke="#334155" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
     ${circles}
     ${labels}
     ${bestNote}
     ${eventNote}
+  `;
+}
+
+function bandGridChart(svg, rows, mode) {
+  const width = 760;
+  const height = 260;
+  const pad = { left: 52, right: 18, top: 20, bottom: 36 };
+  const gridRows = rows.filter((row) => row.type === "grid");
+  const latitudes = [...new Set(gridRows.map((row) => row.latitude))].sort((a, b) => b - a);
+  const longitudes = [...new Set(gridRows.map((row) => row.longitude))].sort((a, b) => a - b);
+  const xValues = mode === "latitude" ? longitudes : [...latitudes].reverse();
+  const yValues = mode === "latitude" ? latitudes : longitudes;
+  const cellW = (width - pad.left - pad.right) / Math.max(1, xValues.length);
+  const cellH = (height - pad.top - pad.bottom) / Math.max(1, yValues.length);
+  const rowByCoord = new Map(gridRows.map((row) => [`${row.latitude},${row.longitude}`, row]));
+  const cells = yValues.flatMap((yValue, yIndex) => xValues.map((xValue, xIndex) => {
+    const lat = mode === "latitude" ? yValue : xValue;
+    const lon = mode === "latitude" ? xValue : yValue;
+    const row = rowByCoord.get(`${lat},${lon}`);
+    if (!row) return "";
+    return `<rect x="${pad.left + xIndex * cellW}" y="${pad.top + yIndex * cellH}" width="${Math.max(1, cellW)}" height="${Math.max(1, cellH)}" fill="${colorFor(row)}" opacity="0.9"><title>${lat} lat, ${lon} lon: ${bandName(row)}</title></rect>`;
+  })).join("");
+  const yLabels = yValues.map((value, i) => i % 2 === 0 ? `<text x="${pad.left - 7}" y="${pad.top + i * cellH + cellH * 0.7}" text-anchor="end" font-size="10" fill="#596675">${value}</text>` : "").join("");
+  const xLabels = xValues.map((value, i) => i % 4 === 0 ? `<text x="${pad.left + i * cellW}" y="${height - 12}" text-anchor="middle" font-size="10" fill="#596675">${value}</text>` : "").join("");
+  const title = mode === "latitude" ? "Latitude bands across all longitudes" : "Longitude bands across all latitudes";
+  svg.innerHTML = `
+    <text x="${pad.left}" y="13" font-size="12" fill="#18212f">${title}</text>
+    ${cells}
+    ${yLabels}
+    ${xLabels}
   `;
 }
 
@@ -875,27 +974,10 @@ function renderCharts() {
   };
   chart(el("timeChart"), timeRows, state.data.minutes.map((minute) => state.data.minute_labels[String(minute)]), (row) => metricValue(row), eventOptions);
 
-  const loc = selectedLocation();
   const instant = instantRows();
   const gridRows = instant.filter((row) => row.type === "grid");
-  const nearestLon = gridRows.reduce((best, row) => Math.abs(row.longitude - loc.longitude) < Math.abs(best - loc.longitude) ? row.longitude : best, gridRows[0]?.longitude || 0);
-  const nearestLat = gridRows.reduce((best, row) => Math.abs(row.latitude - loc.latitude) < Math.abs(best - loc.latitude) ? row.latitude : best, gridRows[0]?.latitude || 0);
-  const latRows = gridRows
-    .filter((row) => row.longitude === nearestLon)
-    .sort((a, b) => a.latitude - b.latitude);
-  const lonRows = gridRows
-    .filter((row) => row.latitude === nearestLat)
-    .sort((a, b) => a.longitude - b.longitude);
-  const latFallback = instant
-    .filter((row) => row.type !== "grid" && Math.abs(row.longitude - loc.longitude) <= 35)
-    .sort((a, b) => a.latitude - b.latitude);
-  const lonFallback = instant
-    .filter((row) => row.type !== "grid" && Math.abs(row.latitude - loc.latitude) <= 25)
-    .sort((a, b) => a.longitude - b.longitude);
-  const finalLatRows = latRows.length ? latRows : latFallback;
-  const finalLonRows = lonRows.length ? lonRows : lonFallback;
-  chart(el("latChart"), finalLatRows, finalLatRows.map((row) => fmt(row.latitude, 0)));
-  chart(el("lonChart"), finalLonRows, finalLonRows.map((row) => fmt(row.longitude, 0)));
+  bandGridChart(el("latChart"), gridRows, "latitude");
+  bandGridChart(el("lonChart"), gridRows, "longitude");
 }
 
 function renderCalendar() {
@@ -911,9 +993,9 @@ function renderCalendar() {
     ${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => `<strong>${d}</strong>`).join("")}
     ${blanks}
     ${rows.map(({ date, row }) => `
-      <button class="calendar-day ${date === state.date ? "selected" : ""}" type="button" data-date="${date}" style="background:${colorFor(row)}">
+      <button class="calendar-day ${date === state.date ? "selected" : ""} ${date === state.today ? "today" : ""}" type="button" data-date="${date}" style="background:${colorFor(row)}">
         <span>${Number(date.slice(-2))}</span>
-        <small>${state.data.minute_labels[String(row.local_time ? Number(row.local_time.slice(0, 2)) * 60 + Number(row.local_time.slice(3, 5)) : state.minute)] || ""}</small>
+        <small>${date === state.today ? "Today " : ""}${state.data.minute_labels[String(row.local_time ? Number(row.local_time.slice(0, 2)) * 60 + Number(row.local_time.slice(3, 5)) : state.minute)] || ""}</small>
       </button>
     `).join("")}
   `;
