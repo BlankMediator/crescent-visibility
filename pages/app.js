@@ -600,11 +600,14 @@ function renderCharts() {
 
   const loc = selectedLocation();
   const instant = instantRows();
-  const latRows = instant
-    .filter((row) => row.type === "grid" && Math.abs(row.longitude - Math.round(loc.longitude / 30) * 30) <= 1)
+  const gridRows = instant.filter((row) => row.type === "grid");
+  const nearestLon = gridRows.reduce((best, row) => Math.abs(row.longitude - loc.longitude) < Math.abs(best - loc.longitude) ? row.longitude : best, gridRows[0]?.longitude || 0);
+  const nearestLat = gridRows.reduce((best, row) => Math.abs(row.latitude - loc.latitude) < Math.abs(best - loc.latitude) ? row.latitude : best, gridRows[0]?.latitude || 0);
+  const latRows = gridRows
+    .filter((row) => row.longitude === nearestLon)
     .sort((a, b) => a.latitude - b.latitude);
-  const lonRows = instant
-    .filter((row) => row.type === "grid" && Math.abs(row.latitude - Math.round(loc.latitude / 20) * 20) <= 1)
+  const lonRows = gridRows
+    .filter((row) => row.latitude === nearestLat)
     .sort((a, b) => a.longitude - b.longitude);
   chart(el("latChart"), latRows, latRows.map((row) => fmt(row.latitude, 0)));
   chart(el("lonChart"), lonRows, lonRows.map((row) => fmt(row.longitude, 0)));
