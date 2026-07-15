@@ -3,19 +3,18 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Crescent Visibility</title>
+    <title>Hilaal</title>
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
     <header class="topbar">
       <div>
-        <p class="eyebrow">Skyfield crescent visibility</p>
-        <h1>Crescent Visibility</h1>
+        <p class="eyebrow">Skyfield hilaal visibility</p>
+        <h1>Hilaal</h1>
       </div>
       <nav>
         <a href="index.html" aria-current="page">Dashboard</a>
         <a href="docs.html">Docs</a>
-        <a href="docs/CRESCENT_VISIBILITY.md">Raw docs</a>
       </nav>
     </header>
 
@@ -23,8 +22,9 @@
       <section class="controls" aria-label="Controls">
         <label class="search-field">
           Search location
-          <input id="locationSearch" type="search" list="locationSuggestions" placeholder="City, country, suburb, or address text">
+          <input id="locationSearch" type="search" list="locationSuggestions" placeholder="City, country, suburb, or complete address">
           <datalist id="locationSuggestions"></datalist>
+          <div id="remoteSuggestions" class="suggestions" hidden></div>
           <small id="locationSearchStatus"></small>
         </label>
         <label>
@@ -50,7 +50,7 @@
           Visibility metric
           <select id="metricSelect"></select>
         </label>
-        <button class="info" type="button" data-info="metric" aria-label="Visibility metric info">i</button>
+        <span class="info-tip" tabindex="0" role="button" aria-label="Visibility metric info" data-tip="Yallop and Odeh are published ARCV/crescent-width criteria. Earlier placeholder metrics have been removed until implemented from real sources.">i</span>
         <label>
           Projection
           <select id="projectionSelect">
@@ -61,7 +61,7 @@
             <option value="orthographic">Orthographic</option>
           </select>
         </label>
-        <button class="info" type="button" data-info="projection" aria-label="Projection info">i</button>
+        <span class="info-tip" tabindex="0" role="button" aria-label="Projection info" data-tip="Projection controls how the Earth is flattened. Plate Carree preserves the lat/lon grid; Robinson is a compromise; Mollweide and Equal Earth preserve area; Orthographic is globe-like.">i</span>
         <label>
           Display time zone
           <select id="timezoneSelect">
@@ -104,8 +104,8 @@
       </section>
 
       <section class="tabs" aria-label="Map views">
-        <button class="tab-button active" type="button" data-view="instant">Selected Date + Time</button>
-        <button class="tab-button" type="button" data-view="day">Selected Date Across 24 Hours</button>
+        <button class="tab-button active" type="button" data-view="day">Best On Selected Date</button>
+        <button class="tab-button" type="button" data-view="instant">Selected Date + Time</button>
         <button class="tab-button" type="button" data-view="slice">Date + Time Across Lat/Lon</button>
       </section>
 
@@ -161,6 +161,7 @@
         </div>
       </section>
     </main>
+    <footer class="site-footer">Copyright Abdullah Hussain 2026</footer>
 
     <script src="app.js"></script>
   </body>

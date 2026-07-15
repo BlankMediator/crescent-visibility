@@ -5,10 +5,12 @@ const state = {
   minute: null,
   metric: "yallop",
   projection: "equirectangular",
-  mapView: "instant",
+  mapView: "day",
   timezoneMode: "location",
   browserTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Browser local",
   browserOffsetHours: -new Date().getTimezoneOffset() / 60,
+  customLocation: null,
+  searchTimer: null,
 };
 
 const el = (id) => document.getElementById(id);
@@ -38,11 +40,13 @@ function fmt(value, digits = 2) {
 }
 
 function selectedLocation() {
+  if (state.customLocation) return state.customLocation;
   return state.data.locations.find((item) => item.name === state.location) || state.data.locations[0];
 }
 
 function selectedRow() {
-  return state.data.location_rows[state.location][state.date][String(state.minute)];
+  if (!state.customLocation) return state.data.location_rows[state.location][state.date][String(state.minute)];
+  return customLocationRow(state.date, state.minute);
 }
 
 function metricValue(row, metric = state.metric) {
@@ -93,6 +97,7 @@ function compactToRow(point, values, minute = state.minute) {
     moon_illumination_fraction: values[10],
     moon_age_days: values[11],
     best_minute: minute,
+    utc_minute: minute,
   };
 }
 
@@ -120,7 +125,7 @@ function mapRowsForUtc(dateText, minute) {
   if (!day) return [];
   const mapMinute = nearestMapMinute(minute);
   const values = day[String(mapMinute)] || [];
-  return values.map((value, index) => compactToRow(state.data.points[index], value, mapMinute));
+  return values.map((value, index) => ({ ...compactToRow(state.data.points[index], value, mapMinute), utc_date: dateText, utc_minute: mapMinute }));
 }
 
 function instantRows() {
@@ -130,19 +135,41 @@ function instantRows() {
 }
 
 function dayRows() {
-  const loc = selectedLocation();
   const best = new Map();
-  state.data.minutes.forEach((minute) => {
-    const utc = localToUtcParts(state.date, minute, loc.utc_offset_hours);
-    mapRowsForUtc(utc.date, utc.minute).forEach((row) => {
+  const mapMinutes = state.data.map_minutes || state.data.minutes;
+  mapMinutes.forEach((minute) => {
+    mapRowsForUtc(state.date, minute).forEach((row) => {
       const current = best.get(row.id);
       const value = metricValue(row);
       if (!current || value > metricValue(current)) {
-        best.set(row.id, { ...row, best_minute: minute });
+        best.set(row.id, { ...row, best_minute: minute, best_utc_date: state.date, utc_date: state.date, utc_minute: minute });
       }
     });
   });
   return [...best.values()];
+}
+
+function nearestMapRow(rows, lat, lon) {
+  return rows.reduce((best, item) => {
+    const d = Math.hypot(item.latitude - lat, item.longitude - lon);
+    const bd = best ? Math.hypot(best.latitude - lat, best.longitude - lon) : Infinity;
+    return d < bd ? item : best;
+  }, null);
+}
+
+function customLocationRow(dateText, minute) {
+  const loc = selectedLocation();
+  const utc = localToUtcParts(dateText, minute, loc.utc_offset_hours);
+  const row = nearestMapRow(mapRowsForUtc(utc.date, utc.minute), loc.latitude, loc.longitude) || {};
+  return {
+    ...row,
+    name: loc.name,
+    latitude: loc.latitude,
+    longitude: loc.longitude,
+    local_date: dateText,
+    local_time: state.data.minute_labels[String(minute)],
+    datetime_utc: `${utc.date}T${state.data.minute_labels[String(utc.minute)]}:00Z`,
+  };
 }
 
 function currentMapRows() {
@@ -206,10 +233,12 @@ function setupControls() {
   syncTimeControls();
 
   locationSelect.addEventListener("change", (event) => {
+    state.customLocation = null;
     state.location = event.target.value;
     render();
   });
   el("locationSearch").addEventListener("change", applyLocationSearch);
+  el("locationSearch").addEventListener("input", scheduleRemoteSearch);
   el("locationSearch").addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
@@ -238,7 +267,6 @@ function setupControls() {
   el("timePrev").addEventListener("click", () => setTimeByIndex(data.minutes.indexOf(state.minute) - 1));
   el("timeNext").addEventListener("click", () => setTimeByIndex(data.minutes.indexOf(state.minute) + 1));
   el("currentButton").addEventListener("click", useCurrent);
-  document.querySelectorAll(".info").forEach((button) => button.addEventListener("click", () => showInfo(button.dataset.info)));
   document.querySelectorAll(".tab-button").forEach((button) => {
     button.addEventListener("click", () => {
       state.mapView = button.dataset.view;
@@ -267,6 +295,7 @@ function applyLocationSearch() {
   const location = state.data.locations.find((item) => item.name.toLowerCase() === query)
     || state.data.locations.find((item) => `${item.name} ${item.search}`.toLowerCase().includes(query));
   if (location) {
+    state.customLocation = null;
     state.location = location.name;
     el("locationSelect").value = state.location;
     el("locationSearchStatus").textContent = `Using ${location.name}`;
@@ -276,13 +305,78 @@ function applyLocationSearch() {
   const point = state.data.points.find((item) => item.type !== "grid" && `${item.name} ${item.country} ${item.search}`.toLowerCase().includes(query));
   if (point) {
     const nearest = nearestLocation(point.latitude, point.longitude);
+    state.customLocation = null;
     state.location = nearest.name;
     el("locationSelect").value = state.location;
     el("locationSearchStatus").textContent = `${point.name} is a map calculation point; using nearest preset ${nearest.name} for charts.`;
     render();
     return;
   }
-  el("locationSearchStatus").textContent = "No offline match. Use browser location for precise current location.";
+  el("locationSearchStatus").textContent = "Searching live address suggestions...";
+  fetchRemoteSuggestions(el("locationSearch").value.trim(), true);
+}
+
+function scheduleRemoteSearch(event) {
+  window.clearTimeout(state.searchTimer);
+  const query = event.target.value.trim();
+  if (query.length < 3) {
+    el("remoteSuggestions").hidden = true;
+    return;
+  }
+  state.searchTimer = window.setTimeout(() => fetchRemoteSuggestions(query), 350);
+}
+
+async function fetchRemoteSuggestions(query, autoPick = false) {
+  try {
+    const response = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=6`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const json = await response.json();
+    const features = (json.features || []).filter((feature) => Array.isArray(feature.geometry?.coordinates));
+    if (!features.length) {
+      el("locationSearchStatus").textContent = "No address suggestions found.";
+      return;
+    }
+    renderRemoteSuggestions(features);
+    if (autoPick && features.length === 1) selectRemoteFeature(features[0]);
+  } catch (error) {
+    el("locationSearchStatus").textContent = "Live address suggestions are unavailable; offline city/country matching still works.";
+  }
+}
+
+function featureName(feature) {
+  const p = feature.properties || {};
+  return [p.name, p.street, p.city, p.state, p.country].filter(Boolean).filter((value, index, arr) => arr.indexOf(value) === index).join(", ") || "Selected address";
+}
+
+function renderRemoteSuggestions(features) {
+  const box = el("remoteSuggestions");
+  box.innerHTML = features.map((feature, index) => {
+    const p = feature.properties || {};
+    return `<button type="button" data-index="${index}">${featureName(feature)}<small>${[p.osm_value, p.postcode].filter(Boolean).join(" ")}</small></button>`;
+  }).join("");
+  box.hidden = false;
+  box.querySelectorAll("button").forEach((button) => button.addEventListener("click", () => selectRemoteFeature(features[Number(button.dataset.index)])));
+}
+
+function selectRemoteFeature(feature) {
+  const [lon, lat] = feature.geometry.coordinates;
+  const name = featureName(feature);
+  state.customLocation = {
+    id: "custom-location",
+    name,
+    country: feature.properties?.country || "",
+    latitude: Number(lat),
+    longitude: Number(lon),
+    elevation_m: 0,
+    utc_offset_hours: state.browserOffsetHours,
+    search: name,
+  };
+  state.location = name;
+  setCustomLocationOption(name);
+  el("locationSearch").value = name;
+  el("remoteSuggestions").hidden = true;
+  el("locationSearchStatus").textContent = `Using address result near ${fmt(lat, 4)}, ${fmt(lon, 4)}; time zone uses your browser offset.`;
+  render();
 }
 
 function syncTimeControls() {
@@ -312,14 +406,37 @@ function useCurrent() {
   if (navigator.geolocation) {
     navigator.geolocation.getCurrentPosition((pos) => {
       const nearest = nearestLocation(pos.coords.latitude, pos.coords.longitude);
+      state.customLocation = {
+        id: "browser-location",
+        name: "Browser current location",
+        country: "",
+        latitude: pos.coords.latitude,
+        longitude: pos.coords.longitude,
+        elevation_m: pos.coords.altitude || 0,
+        utc_offset_hours: state.browserOffsetHours,
+        search: "current browser geolocation",
+      };
       state.location = nearest.name;
-      el("locationSelect").value = state.location;
-      el("locationSearchStatus").textContent = `Browser position matched to ${nearest.name}`;
+      setCustomLocationOption(state.customLocation.name);
+      el("locationSearchStatus").textContent = `Using browser position; nearest preset is ${nearest.name}`;
       render();
     }, () => render(), { enableHighAccuracy: false, timeout: 6000 });
   } else {
     render();
   }
+}
+
+function setCustomLocationOption(name) {
+  const select = el("locationSelect");
+  let option = select.querySelector("option[data-custom='true']");
+  if (!option) {
+    option = document.createElement("option");
+    option.dataset.custom = "true";
+    select.appendChild(option);
+  }
+  option.value = name;
+  option.textContent = name;
+  select.value = name;
 }
 
 function nearestLocation(lat, lon) {
@@ -328,15 +445,6 @@ function nearestLocation(lat, lon) {
     const bd = Math.hypot(best.latitude - lat, best.longitude - lon);
     return d < bd ? item : best;
   }, state.data.locations[0]);
-}
-
-function showInfo(kind) {
-  if (kind === "metric") {
-    const metric = state.data.metrics[state.metric];
-    alert(`${metric.label}\n\n${metric.status}\n\nOnly Yallop and Odeh are shown for now; exploratory and legacy metrics were removed until they can be implemented as real published models.`);
-    return;
-  }
-  alert("Projection controls the flat map view. Plate Carree is rectangular lat/lon; Robinson is a compromise world map; Mollweide and Equal Earth are equal-area; Orthographic is globe-like and centered on the selected location.");
 }
 
 function displayTime(utcText, offsetHours = selectedLocation().utc_offset_hours) {
@@ -351,7 +459,7 @@ function displayTime(utcText, offsetHours = selectedLocation().utc_offset_hours)
 }
 
 function definitionButton(term) {
-  return `<button class="def" type="button" data-def="${term}" aria-label="${term} definition">?</button>`;
+  return `<span class="def-tip" tabindex="0" role="button" data-tip="${DEFINITIONS[term]}" aria-label="${term} definition">i</span>`;
 }
 
 function renderCards(row) {
@@ -388,7 +496,6 @@ function renderDetails(row) {
   ];
   el("positionText").textContent = `${state.location}, ${state.date} ${state.data.minute_labels[String(state.minute)]} location time; map UTC ${utc.date} ${state.data.minute_labels[String(utc.minute)]}`;
   el("detailList").innerHTML = details.map(([key, value]) => `<dt>${key} ${DEFINITIONS[key] ? definitionButton(key) : ""}</dt><dd>${value}</dd>`).join("");
-  document.querySelectorAll(".def").forEach((button) => button.addEventListener("click", () => alert(`${button.dataset.def}\n\n${DEFINITIONS[button.dataset.def]}`)));
 }
 
 function project(lon, lat, width, height) {
@@ -498,6 +605,18 @@ function drawMap() {
   ctx.lineWidth = 0.65;
   state.data.countries.features.forEach((feature) => drawGeometry(ctx, feature.geometry, width, height));
 
+  drawGraticule(ctx, width, height);
+
+  currentMapRows().filter((point) => point.type === "grid").forEach((point) => {
+    const xy = project(point.longitude, point.latitude, width, height);
+    if (!xy) return;
+    ctx.save();
+    ctx.globalAlpha = 0.18;
+    ctx.fillStyle = colorFor(point);
+    ctx.fillRect(xy[0] - 10, xy[1] - 10, 20, 20);
+    ctx.restore();
+  });
+
   currentMapRows().forEach((point) => {
     const xy = project(point.longitude, point.latitude, width, height);
     if (!xy) return;
@@ -528,6 +647,57 @@ function drawMap() {
   if (state.projection === "orthographic") ctx.restore();
 }
 
+function drawGraticule(ctx, width, height) {
+  ctx.save();
+  ctx.strokeStyle = "rgba(15, 23, 42, 0.20)";
+  ctx.fillStyle = "rgba(15, 23, 42, 0.52)";
+  ctx.lineWidth = 0.55;
+  ctx.font = "11px system-ui, sans-serif";
+  for (let lon = -180; lon <= 180; lon += 15) {
+    ctx.beginPath();
+    let started = false;
+    for (let lat = -75; lat <= 75; lat += 5) {
+      const xy = project(lon, lat, width, height);
+      if (!xy) {
+        started = false;
+        continue;
+      }
+      if (!started) {
+        ctx.moveTo(xy[0], xy[1]);
+        started = true;
+      } else {
+        ctx.lineTo(xy[0], xy[1]);
+      }
+    }
+    ctx.stroke();
+    if (lon % 45 === 0) {
+      const label = project(lon, -72, width, height);
+      if (label) ctx.fillText(`${lon} deg`, label[0] + 2, label[1] - 2);
+    }
+  }
+  for (let lat = -60; lat <= 60; lat += 15) {
+    ctx.beginPath();
+    let started = false;
+    for (let lon = -180; lon <= 180; lon += 5) {
+      const xy = project(lon, lat, width, height);
+      if (!xy) {
+        started = false;
+        continue;
+      }
+      if (!started) {
+        ctx.moveTo(xy[0], xy[1]);
+        started = true;
+      } else {
+        ctx.lineTo(xy[0], xy[1]);
+      }
+    }
+    ctx.stroke();
+    const label = project(-178, lat, width, height);
+    if (label) ctx.fillText(`${lat} deg`, label[0] + 3, label[1] - 3);
+  }
+  ctx.restore();
+}
+
 function nearestMapPoint(event) {
   const canvas = el("mapCanvas");
   const rect = canvas.getBoundingClientRect();
@@ -552,7 +722,7 @@ function nearestMapPoint(event) {
 function attachMapTooltip() {
   const canvas = el("mapCanvas");
   const tooltip = el("tooltip");
-  canvas.addEventListener("mousemove", (event) => {
+  const show = (event) => {
     const nearest = nearestMapPoint(event);
     if (!nearest) {
       tooltip.hidden = true;
@@ -565,13 +735,16 @@ function attachMapTooltip() {
     tooltip.innerHTML = `
       <strong>${p.name}</strong><br>
       ${p.type} point: ${fmt(p.latitude, 1)}, ${fmt(p.longitude, 1)}<br>
+      UTC sample ${p.utc_date || state.date} ${state.data.minute_labels[String(p.utc_minute ?? p.best_minute ?? state.minute)]}<br>
       ${state.data.metrics[state.metric].label}: ${bandName(p)}<br>
       ${state.metric === "yallop" ? "q" : "V"} ${fmt(metricRawValue(p), 3)}<br>
       Moon alt ${fmt(p.moon_altitude_deg, 1)} deg; Sun alt ${fmt(p.sun_altitude_deg, 1)} deg<br>
       ARCV ${fmt(p.moon_arc_of_vision_deg, 2)} deg; DAZ ${fmt(p.moon_relative_azimuth_deg, 2)} deg<br>
-      W ${fmt(p.moon_crescent_width_arcmin, 3)} arcmin${state.mapView === "day" ? `<br>Best time ${state.data.minute_labels[String(p.best_minute)]}` : ""}
+      W ${fmt(p.moon_crescent_width_arcmin, 3)} arcmin${state.mapView === "day" ? `<br>Best UTC time ${p.best_utc_date || p.utc_date || state.date} ${state.data.minute_labels[String(p.best_minute)]}` : ""}
     `;
-  });
+  };
+  canvas.addEventListener("mousemove", show);
+  canvas.addEventListener("click", show);
   canvas.addEventListener("mouseleave", () => { tooltip.hidden = true; });
 }
 
@@ -595,7 +768,7 @@ function chart(svg, rows, xLabels, valueFn = (row) => metricValue(row)) {
 }
 
 function renderCharts() {
-  const timeRows = state.data.minutes.map((minute) => state.data.location_rows[state.location][state.date][String(minute)]);
+  const timeRows = state.data.minutes.map((minute) => state.customLocation ? customLocationRow(state.date, minute) : state.data.location_rows[state.location][state.date][String(minute)]);
   chart(el("timeChart"), timeRows, state.data.minutes.map((minute) => state.data.minute_labels[String(minute)]));
 
   const loc = selectedLocation();
@@ -624,7 +797,7 @@ function renderCharts() {
 function renderCalendar() {
   const rows = state.data.dates.map((date) => {
     const best = state.data.minutes
-      .map((minute) => state.data.location_rows[state.location][date][String(minute)])
+      .map((minute) => state.customLocation ? customLocationRow(date, minute) : state.data.location_rows[state.location][date][String(minute)])
       .sort((a, b) => metricValue(b) - metricValue(a))[0];
     return { date, row: best };
   });
@@ -664,9 +837,9 @@ function renderMapText() {
     slice: "Selected Date + Time Lat/Lon Sweep",
   };
   const subtitles = {
-    instant: "Country, city, and grid points at the selected instant.",
-    day: "Each point shows its best visibility band across the selected local calendar date.",
-    slice: "Grid points near the selected latitude and longitude are emphasized.",
+    instant: "Country, state, capital city, major city, and grid points at the selected instant.",
+    day: "Each point shows its best visibility band across the selected UTC date from 00:00 to 24:00.",
+    slice: "15 degree latitude/longitude grid points near the selected latitude and longitude are emphasized.",
   };
   el("mapTitle").textContent = titles[state.mapView];
   el("mapSubtitle").textContent = subtitles[state.mapView];

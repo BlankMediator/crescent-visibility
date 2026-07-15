@@ -56,24 +56,13 @@ GRID_RESOLUTIONS = {
 CALCULATION_CACHE_VERSION = "birth-gates-v1"
 
 METRIC_HELP = {
-    "composite": (
-        "Exploratory proxy: a 0-100 convenience index combining moon altitude, elongation, "
-        "illumination, sun darkness, and moon age. Higher is better for naked-eye crescent visibility."
-    ),
-    "ilyas": "Legacy heuristic using moon altitude and moon-sun elongation; not a canonical implementation.",
     "yallop": "Formula-based Yallop q implementation using ARCV and topocentric crescent width W.",
     "odeh": "Formula-based Odeh V implementation using ARCV and topocentric crescent width W.",
-    "shaukat": "Legacy heuristic using elongation, moon altitude, and moon age.",
-    "saao": "Legacy heuristic using moon age and sunset-to-moonset lag.",
 }
 
 METRIC_LABELS = {
-    "composite": "Composite index (exploratory)",
-    "ilyas": "Ilyas (legacy heuristic)",
-    "yallop": "Yallop q (real formula criterion)",
-    "odeh": "Odeh V (real formula criterion)",
-    "shaukat": "Shaukat (legacy heuristic)",
-    "saao": "SAAO (legacy heuristic)",
+    "yallop": "Yallop",
+    "odeh": "Odeh",
 }
 
 PROJECTION_HELP = (
@@ -86,7 +75,7 @@ def metric_display_name(value):
     return METRIC_LABELS.get(value, value.title())
 
 
-st.set_page_config(page_title="Crescent Visibility", layout="wide")
+st.set_page_config(page_title="Hilaal", layout="wide")
 
 
 def current_defaults():
@@ -323,11 +312,8 @@ def render_world_map(df, lat, lon, metric, projection_name, current):
             alt.Tooltip("odeh_v_display:Q", title="Odeh V", format=".3f"),
             alt.Tooltip("illumination_percent:Q", title="Illumination %", format=".2f"),
             alt.Tooltip("moon_age_display:Q", title="Moon age days", format=".2f"),
-            alt.Tooltip("ilyas_label:N", title="Ilyas"),
             alt.Tooltip("yallop_label:N", title="Yallop"),
             alt.Tooltip("odeh_label:N", title="Odeh"),
-            alt.Tooltip("shaukat_label:N", title="Shaukat"),
-            alt.Tooltip("saao_label:N", title="SAAO"),
         ],
     )
     selected_point = alt.Chart(pd.DataFrame([{
@@ -403,7 +389,7 @@ initialize_session_defaults()
 apply_browser_query_params()
 
 with st.sidebar:
-    st.header("Crescent Visibility")
+    st.header("Hilaal")
     if st.button(
         "Use current date/time",
         use_container_width=True,
@@ -591,7 +577,7 @@ sighting_context = cached_local_sighting_context(
     CALCULATION_CACHE_VERSION,
 )
 
-st.title("Crescent Visibility")
+st.title("Hilaal")
 st.info(
     "Yallop and Odeh use ARCV/crescent-width formula criteria. The Islamic sighting gates below "
     "show moon birth, sunset, moonset, and whether the Moon is above the horizon after sunset.",
@@ -605,7 +591,7 @@ metric_cols[0].metric("UTC", dt_utc.strftime("%Y-%m-%d %H:%M"))
 metric_cols[1].metric("Visibility", metric_label(current, metric))
 metric_cols[2].metric(
     "Score",
-    f"{metric_value(current, metric):.1f}" if metric == "composite" else int(metric_value(current, metric)),
+    int(metric_value(current, metric)),
 )
 metric_cols[3].metric("Moon altitude", f"{current['moon_altitude_deg']:.1f} deg")
 metric_cols[4].metric("Elongation", f"{current['moon_sun_separation_deg']:.1f} deg")
@@ -696,7 +682,7 @@ with chart_tabs[3]:
 
     model_rows = [
         {"model": name.title(), "score": current[f"{name}_score"], "label": current[f"{name}_label"]}
-        for name in ["ilyas", "yallop", "odeh", "shaukat", "saao"]
+        for name in ["yallop", "odeh"]
     ]
     st.dataframe(model_rows, hide_index=True, use_container_width=True)
 

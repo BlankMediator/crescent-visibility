@@ -3,19 +3,18 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Crescent Visibility Docs</title>
+    <title>Hilaal Docs</title>
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
     <header class="topbar">
       <div>
         <p class="eyebrow">Documentation</p>
-        <h1>Crescent Visibility</h1>
+        <h1>Hilaal</h1>
       </div>
       <nav>
         <a href="index.html">Dashboard</a>
         <a href="docs.html" aria-current="page">Docs</a>
-        <a href="docs/CRESCENT_VISIBILITY.md">Raw docs</a>
       </nav>
     </header>
     <main>
@@ -24,14 +23,105 @@
           <h2>Model, Astronomy, Sources, and Limitations</h2>
           <p>Generated from the repository documentation.</p>
         </div>
-        <pre id="docsText">Loading documentation...</pre>
+        <div class="docs-layout">
+          <aside id="docsToc" class="docs-toc" aria-label="Documentation contents"></aside>
+          <article id="docsText" class="markdown-body">Loading documentation...</article>
+        </div>
       </section>
     </main>
+    <footer class="site-footer">Copyright Abdullah Hussain 2026</footer>
     <script>
+      function escapeHtml(text) {
+        return text.replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[ch]));
+      }
+      function inline(text) {
+        return escapeHtml(text)
+          .replace(/`([^`]+)`/g, "<code>$1</code>")
+          .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "<a href=\"$2\">$1</a>")
+          .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+      }
+      function slug(text) {
+        return text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+      }
+      function renderMarkdown(text) {
+        const lines = text.split(/\r?\n/);
+        const toc = [];
+        const html = [];
+        let listOpen = false;
+        let table = [];
+        let codeOpen = false;
+        const closeList = () => {
+          if (listOpen) {
+            html.push("</ul>");
+            listOpen = false;
+          }
+        };
+        const flushTable = () => {
+          if (!table.length) return;
+          const rows = table.filter((row) => !/^\|\s*-/.test(row)).map((row) => row.split("|").slice(1, -1).map((cell) => inline(cell.trim())));
+          if (rows.length) {
+            const [head, ...body] = rows;
+            html.push(`<table><thead><tr>${head.map((cell) => `<th>${cell}</th>`).join("")}</tr></thead><tbody>${body.map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table>`);
+          }
+          table = [];
+        };
+        lines.forEach((line) => {
+          if (line.startsWith("```")) {
+            closeList();
+            flushTable();
+            html.push(codeOpen ? "</code></pre>" : "<pre><code>");
+            codeOpen = !codeOpen;
+            return;
+          }
+          if (codeOpen) {
+            html.push(escapeHtml(line) + "\n");
+            return;
+          }
+          const heading = /^(#{1,4})\s+(.*)$/.exec(line);
+          if (heading) {
+            closeList();
+            flushTable();
+            const level = heading[1].length;
+            const text = heading[2].trim();
+            const id = slug(text);
+            toc.push({ level, text, id });
+            html.push(`<h${level} id="${id}">${inline(text)} <a href="#${id}" aria-label="Link to ${escapeHtml(text)}">#</a></h${level}>`);
+            return;
+          }
+          if (/^\|.+\|$/.test(line.trim())) {
+            closeList();
+            table.push(line.trim());
+            return;
+          }
+          flushTable();
+          if (/^-\s+/.test(line)) {
+            if (!listOpen) {
+              html.push("<ul>");
+              listOpen = true;
+            }
+            html.push(`<li>${inline(line.replace(/^-\s+/, ""))}</li>`);
+            return;
+          }
+          if (/^\d+\.\s+/.test(line)) {
+            if (!listOpen) {
+              html.push("<ul>");
+              listOpen = true;
+            }
+            html.push(`<li>${inline(line.replace(/^\d+\.\s+/, ""))}</li>`);
+            return;
+          }
+          closeList();
+          if (line.trim()) html.push(`<p>${inline(line.trim())}</p>`);
+        });
+        closeList();
+        flushTable();
+        document.getElementById("docsToc").innerHTML = `<h2>Contents</h2>${toc.filter((item) => item.level <= 3).map((item) => `<a class="toc-l${item.level}" href="#${item.id}">${escapeHtml(item.text)}</a>`).join("")}`;
+        return html.join("\n");
+      }
       fetch("docs/CRESCENT_VISIBILITY.md")
         .then((response) => response.text())
         .then((text) => {
-          document.getElementById("docsText").textContent = text;
+          document.getElementById("docsText").innerHTML = renderMarkdown(text);
         })
         .catch((error) => {
           document.getElementById("docsText").textContent = String(error);

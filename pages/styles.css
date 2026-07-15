@@ -88,7 +88,7 @@ main {
 }
 
 .controls {
-  grid-template-columns: minmax(220px, 1.4fr) minmax(170px, 1fr) auto minmax(130px, 0.8fr) minmax(250px, 1.2fr) minmax(220px, 1fr) 36px minmax(170px, 1fr) 36px minmax(180px, 1fr);
+  grid-template-columns: minmax(240px, 1.5fr) minmax(170px, 1fr) auto minmax(130px, 0.8fr) minmax(250px, 1.2fr) minmax(190px, 1fr) 28px minmax(170px, 1fr) 28px minmax(180px, 1fr);
   align-items: end;
   padding: 16px;
   background: #ffffff;
@@ -125,7 +125,7 @@ button {
 select,
 button,
 input[type="search"] {
-  padding: 0 10px;
+  padding: 0 12px;
 }
 
 button {
@@ -152,7 +152,6 @@ input:hover {
 }
 
 .time-control button,
-.info,
 .def {
   padding: 0;
 }
@@ -162,17 +161,80 @@ input:hover {
   width: 100%;
 }
 
-.info,
-.def {
-  width: 36px;
-  border-radius: 50%;
-}
-
 .def {
   width: 22px;
   min-height: 22px;
   margin-left: 4px;
   font-size: 12px;
+}
+
+.info-tip,
+.def-tip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: #ffffff;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 800;
+  cursor: help;
+}
+
+.info-tip::after,
+.def-tip::after {
+  content: attr(data-tip);
+  display: none;
+  position: absolute;
+  z-index: 12;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  width: min(280px, 78vw);
+  transform: translateX(-50%);
+  padding: 9px 10px;
+  border-radius: 6px;
+  background: #111827;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
+}
+
+.info-tip:hover::after,
+.info-tip:focus::after,
+.def-tip:hover::after,
+.def-tip:focus::after {
+  display: block;
+}
+
+.suggestions {
+  display: grid;
+  gap: 4px;
+  max-height: 220px;
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.12);
+}
+
+.suggestions button {
+  min-height: 34px;
+  padding: 6px 8px;
+  text-align: left;
+  font-weight: 650;
+}
+
+.suggestions small {
+  display: block;
+  color: var(--muted);
+  font-weight: 500;
 }
 
 .status-grid {
@@ -357,18 +419,85 @@ pre {
 }
 
 .docs-page {
-  max-width: 980px;
+  max-width: 1180px;
   margin: 0 auto;
+}
+
+.docs-layout {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.docs-toc {
+  position: sticky;
+  top: 100px;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.docs-toc h2 {
+  margin-bottom: 4px;
+}
+
+.docs-toc a {
+  color: var(--ink);
+  text-decoration: none;
+  font-size: 13px;
+}
+
+.docs-toc .toc-l3 {
+  padding-left: 12px;
+  color: var(--muted);
+}
+
+.markdown-body {
+  font-size: 15px;
+  line-height: 1.65;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4 {
+  margin: 22px 0 10px;
+}
+
+.markdown-body p,
+.markdown-body ul,
+.markdown-body table,
+.markdown-body pre {
+  margin: 0 0 14px;
+}
+
+.markdown-body table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid var(--line);
+  padding: 7px 8px;
+  text-align: left;
+}
+
+.site-footer {
+  padding: 18px 24px 30px;
+  color: var(--muted);
+  text-align: center;
+  font-size: 13px;
 }
 
 @media (max-width: 1180px) {
   .controls {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .info {
-    width: 100%;
-    border-radius: 6px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
@@ -383,5 +512,50 @@ pre {
   .split,
   .tabs {
     grid-template-columns: 1fr;
+  }
+
+  main {
+    padding: 14px;
+  }
+
+  .panel-title {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .docs-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .docs-toc {
+    position: static;
+  }
+
+  .info-tip {
+    justify-self: start;
+  }
+}
+
+@media (max-width: 560px) {
+  .topbar {
+    padding: 16px;
+  }
+
+  h1 {
+    font-size: 25px;
+  }
+
+  .controls,
+  .panel,
+  .status-grid article {
+    padding: 12px;
+  }
+
+  .time-control {
+    grid-template-columns: 36px minmax(0, 1fr) 36px;
+  }
+
+  .legend span {
+    width: 100%;
   }
 }

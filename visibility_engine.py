@@ -6,18 +6,15 @@ import pandas as pd
 
 from calculations import calculate_astronomy, get_lunar_phase_events, get_solar_lunar_events
 from models import (
-    ilyas_model,
     odeh_details,
     odeh_model,
-    saao_model,
-    shaukat_model,
     yallop_details,
     yallop_model,
 )
 
 
-MODEL_NAMES = ["ilyas", "yallop", "odeh", "shaukat", "saao"]
-METRIC_NAMES = ["composite", *MODEL_NAMES]
+MODEL_NAMES = ["yallop", "odeh"]
+METRIC_NAMES = MODEL_NAMES
 
 
 def normalise_datetime(value):
@@ -126,16 +123,9 @@ def _model_outputs(results, lag_minutes=np.nan):
     arcv = results["moon_arc_of_vision_deg"]
     width = results["moon_crescent_width_arcmin"]
     outputs = {
-        "ilyas": ilyas_model(results["moon_altitude_deg"], results["moon_sun_separation_deg"]),
         "yallop": yallop_model(arcv, width),
         "odeh": odeh_model(arcv, width),
-        "shaukat": shaukat_model(
-            results["moon_sun_separation_deg"],
-            results["moon_altitude_deg"],
-            results["moon_age_days"],
-        ),
     }
-    outputs["saao"] = (np.nan, "N/A") if np.isnan(lag_minutes) else saao_model(results["moon_age_days"], lag_minutes)
     return outputs
 
 
@@ -260,8 +250,8 @@ def build_date_series(lat, lon, elevation, start_day, days, minute_of_day, utc_o
     return pd.DataFrame(rows)
 
 
-def build_position_series(lat, lon, elevation, dt_utc, mode, step_degrees=5, metric="composite"):
-    evaluator = evaluate_datetime if metric == "saao" else evaluate_datetime_fast
+def build_position_series(lat, lon, elevation, dt_utc, mode, step_degrees=5, metric="yallop"):
+    evaluator = evaluate_datetime_fast
     rows = []
     if mode == "latitude":
         for sweep_lat in np.arange(-70.0, 71.0, float(step_degrees)):
@@ -274,8 +264,8 @@ def build_position_series(lat, lon, elevation, dt_utc, mode, step_degrees=5, met
     return pd.DataFrame(rows)
 
 
-def build_world_grid(elevation, dt_utc, lat_step=10, lon_step=10, metric="composite"):
-    evaluator = evaluate_datetime if metric == "saao" else evaluate_datetime_fast
+def build_world_grid(elevation, dt_utc, lat_step=10, lon_step=10, metric="yallop"):
+    evaluator = evaluate_datetime_fast
     rows = []
     latitudes = np.arange(-70.0, 71.0, float(lat_step))
     longitudes = np.arange(-180.0, 181.0, float(lon_step))

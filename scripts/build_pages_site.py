@@ -1,4 +1,4 @@
-"""Build the static GitHub Pages crescent-visibility app.
+"""Build the static GitHub Pages Hilaal app.
 
 The public site is static, so this script samples the Python/Skyfield engine
 into JSON that the browser can explore without a server.
@@ -9,7 +9,9 @@ from __future__ import annotations
 import calendar
 import json
 import math
+import os
 import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -30,13 +32,15 @@ DOCS_DIR = PAGES_DIR / "docs"
 CARTOPY_DATA_DIR = ROOT / "cartopy_data"
 cartopy.config["data_dir"] = str(CARTOPY_DATA_DIR)
 
+WORKER_POINTS = []
+
 METRICS = {
     "yallop": {
-        "label": "Yallop q (real formula criterion)",
+        "label": "Yallop",
         "status": "Formula-based criterion using ARCV and topocentric crescent width W.",
     },
     "odeh": {
-        "label": "Odeh V (real formula criterion)",
+        "label": "Odeh",
         "status": "Formula-based criterion using ARCV and topocentric crescent width W.",
     },
 }
@@ -109,6 +113,46 @@ CITY_POINTS = [
     ("Rome", "Italy", 41.9028, 12.4964, 21),
 ]
 
+STATE_POINTS = [
+    ("New South Wales", "Australia", -31.2532, 146.9211, 0),
+    ("Victoria", "Australia", -37.4713, 144.7852, 0),
+    ("Queensland", "Australia", -22.5752, 144.0848, 0),
+    ("Western Australia", "Australia", -27.6728, 121.6283, 0),
+    ("South Australia", "Australia", -30.0002, 136.2092, 0),
+    ("Tasmania", "Australia", -42.0409, 146.8087, 0),
+    ("Australian Capital Territory", "Australia", -35.4735, 149.0124, 0),
+    ("Northern Territory", "Australia", -19.4914, 132.5510, 0),
+    ("California", "United States", 36.7783, -119.4179, 0),
+    ("Texas", "United States", 31.9686, -99.9018, 0),
+    ("New York State", "United States", 43.2994, -74.2179, 0),
+    ("Ontario", "Canada", 50.0000, -85.0000, 0),
+    ("Punjab", "Pakistan", 31.1704, 72.7097, 0),
+    ("Sindh", "Pakistan", 26.0094, 68.7768, 0),
+    ("Maharashtra", "India", 19.7515, 75.7139, 0),
+    ("West Java", "Indonesia", -6.9175, 107.6191, 0),
+]
+
+CAPITAL_POINTS = [
+    ("Canberra", "Australia", -35.2809, 149.1300, 577),
+    ("Washington, DC", "United States", 38.9072, -77.0369, 7),
+    ("Ottawa", "Canada", 45.4215, -75.6972, 70),
+    ("Brasilia", "Brazil", -15.8267, -47.9218, 1172),
+    ("Riyadh", "Saudi Arabia", 24.7136, 46.6753, 612),
+    ("Cairo", "Egypt", 30.0444, 31.2357, 23),
+    ("Ankara", "Turkiye", 39.9334, 32.8597, 938),
+    ("Islamabad", "Pakistan", 33.6844, 73.0479, 540),
+    ("New Delhi", "India", 28.6139, 77.2090, 216),
+    ("Dhaka", "Bangladesh", 23.8103, 90.4125, 4),
+    ("Kuala Lumpur", "Malaysia", 3.1390, 101.6869, 66),
+    ("Jakarta", "Indonesia", -6.2088, 106.8456, 8),
+    ("London", "United Kingdom", 51.5072, -0.1276, 11),
+    ("Paris", "France", 48.8566, 2.3522, 35),
+    ("Berlin", "Germany", 52.5200, 13.4050, 34),
+    ("Madrid", "Spain", 40.4168, -3.7038, 667),
+    ("Rome", "Italy", 41.9028, 12.4964, 21),
+    ("Wellington", "New Zealand", -41.2865, 174.7762, 31),
+]
+
 
 def finite_or_none(value, digits=4):
     if isinstance(value, (datetime, date)):
@@ -173,6 +217,63 @@ def compact_row(row):
     ]
 
 
+def init_worker(points):
+    global WORKER_POINTS
+    WORKER_POINTS = points
+
+
+def map_values_for_instant(day_text, minute):
+    utc_day = date.fromisoformat(day_text)
+    dt_utc = datetime.combine(utc_day, datetime.min.time()) + timedelta(minutes=minute)
+    values = []
+    for point in WORKER_POINTS:
+        row = dict(
+            evaluate_datetime_fast(
+                point["latitude"],
+                point["longitude"],
+                point["elevation_m"],
+                dt_utc,
+            )
+        )
+        values.append(compact_row(row))
+    return day_text, minute, values
+
+
+def location_rows_for_location(loc, date_texts, minutes, minute_labels):
+    name = loc["name"]
+    rows = {}
+    for day_text in date_texts:
+        local_day = date.fromisoformat(day_text)
+        rows[day_text] = {}
+        events = get_solar_lunar_events(
+            loc["latitude"],
+            loc["longitude"],
+            loc["elevation_m"],
+            local_day.year,
+            local_day.month,
+            local_day.day,
+            utc_offset_hours=loc["utc_offset_hours"],
+        )
+        sunset_dt = parse_utc(events.get("sunset_utc"))
+        phase_dt = sunset_dt or local_to_utc(local_day, 18 * 60, loc["utc_offset_hours"])
+        phase_events = get_lunar_phase_events(
+            phase_dt.year,
+            phase_dt.month,
+            phase_dt.day,
+            phase_dt.hour,
+            phase_dt.minute,
+        )
+        daily_context = islamic_sighting_context(events, phase_events)
+        for minute in minutes:
+            dt_utc = local_to_utc(local_day, minute, loc["utc_offset_hours"])
+            row = dict(evaluate_datetime_fast(loc["latitude"], loc["longitude"], loc["elevation_m"], dt_utc))
+            row.update(daily_context)
+            row["local_date"] = day_text
+            row["local_time"] = minute_labels[str(minute)]
+            rows[day_text][str(minute)] = pick(row, DETAIL_KEYS + ["local_date", "local_time"])
+    return name, rows
+
+
 def month_dates(anchor):
     _, days_in_month = calendar.monthrange(anchor.year, anchor.month)
     return [date(anchor.year, anchor.month, day) for day in range(1, days_in_month + 1)]
@@ -216,8 +317,8 @@ def build_country_geojson_and_points():
 
 def build_points(country_points):
     points = []
-    for lat in range(-60, 61, 60):
-        for lon in range(-180, 181, 60):
+    for lat in range(-60, 61, 15):
+        for lon in range(-180, 181, 15):
             points.append(
                 {
                     "type": "grid",
@@ -230,6 +331,30 @@ def build_points(country_points):
                 }
             )
     points.extend(country_points)
+    for name, country, lat, lon, elevation in STATE_POINTS:
+        points.append(
+            {
+                "type": "state",
+                "name": f"{name}, {country}",
+                "country": country,
+                "latitude": lat,
+                "longitude": lon,
+                "elevation_m": elevation,
+                "search": f"{name} {country} state province region",
+            }
+        )
+    for name, country, lat, lon, elevation in CAPITAL_POINTS:
+        points.append(
+            {
+                "type": "capital",
+                "name": f"{name}, {country}",
+                "country": country,
+                "latitude": lat,
+                "longitude": lon,
+                "elevation_m": elevation,
+                "search": f"{name} {country} capital",
+            }
+        )
     for name, country, lat, lon, elevation in CITY_POINTS:
         points.append(
             {
@@ -272,66 +397,43 @@ def build_dataset():
     anchor = generated_at.date()
     dates = month_dates(anchor)
     minutes = list(range(0, 24 * 60, 60))
-    map_minutes = list(range(0, 24 * 60, 720))
+    map_minutes = minutes
     minute_labels = {str(minute): f"{minute // 60:02d}:{minute % 60:02d}" for minute in minutes}
     country_geojson, country_points = build_country_geojson_and_points()
     points = build_points(country_points)
     locations = build_locations()
 
+    workers = max(1, min(8, (os.cpu_count() or 2) - 1))
+    date_texts = [day.isoformat() for day in dates]
+    print(f"Building {len(locations)} preset location tables with {workers} workers...", flush=True)
     location_rows = {}
-    for loc in locations:
-        name = loc["name"]
-        location_rows[name] = {}
-        for local_day in dates:
-            day_text = local_day.isoformat()
-            location_rows[name][day_text] = {}
-            events = get_solar_lunar_events(
-                loc["latitude"],
-                loc["longitude"],
-                loc["elevation_m"],
-                local_day.year,
-                local_day.month,
-                local_day.day,
-                utc_offset_hours=loc["utc_offset_hours"],
-            )
-            sunset_dt = parse_utc(events.get("sunset_utc"))
-            phase_dt = sunset_dt or local_to_utc(local_day, 18 * 60, loc["utc_offset_hours"])
-            phase_events = get_lunar_phase_events(
-                phase_dt.year,
-                phase_dt.month,
-                phase_dt.day,
-                phase_dt.hour,
-                phase_dt.minute,
-            )
-            daily_context = islamic_sighting_context(events, phase_events)
-            for minute in minutes:
-                dt_utc = local_to_utc(local_day, minute, loc["utc_offset_hours"])
-                row = dict(evaluate_datetime_fast(loc["latitude"], loc["longitude"], loc["elevation_m"], dt_utc))
-                row.update(daily_context)
-                row["local_date"] = day_text
-                row["local_time"] = minute_labels[str(minute)]
-                location_rows[name][day_text][str(minute)] = pick(row, DETAIL_KEYS + ["local_date", "local_time"])
+    if workers == 1:
+        for loc in locations:
+            name, rows = location_rows_for_location(loc, date_texts, minutes, minute_labels)
+            location_rows[name] = rows
+    else:
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            futures = [executor.submit(location_rows_for_location, loc, date_texts, minutes, minute_labels) for loc in locations]
+            for future in as_completed(futures):
+                name, rows = future.result()
+                location_rows[name] = rows
 
     # Include adjacent UTC days so local date/time conversion can safely cross month boundaries.
     utc_days = [dates[0] - timedelta(days=1), *dates, dates[-1] + timedelta(days=1)]
-    map_values = {}
-    for utc_day in utc_days:
-        day_text = utc_day.isoformat()
-        map_values[day_text] = {}
-        for minute in map_minutes:
-            dt_utc = datetime.combine(utc_day, datetime.min.time()) + timedelta(minutes=minute)
-            values = []
-            for point in points:
-                row = dict(
-                    evaluate_datetime_fast(
-                        point["latitude"],
-                        point["longitude"],
-                        point["elevation_m"],
-                        dt_utc,
-                    )
-                )
-                values.append(compact_row(row))
-            map_values[day_text][str(minute)] = values
+    map_values = {utc_day.isoformat(): {} for utc_day in utc_days}
+    tasks = [(utc_day.isoformat(), minute) for utc_day in utc_days for minute in map_minutes]
+    print(f"Building {len(tasks)} hourly map snapshots for {len(points)} points with {workers} workers...", flush=True)
+    if workers == 1:
+        init_worker(points)
+        for day_text, minute in tasks:
+            result_day, result_minute, values = map_values_for_instant(day_text, minute)
+            map_values[result_day][str(result_minute)] = values
+    else:
+        with ProcessPoolExecutor(max_workers=workers, initializer=init_worker, initargs=(points,)) as executor:
+            futures = [executor.submit(map_values_for_instant, day_text, minute) for day_text, minute in tasks]
+            for future in as_completed(futures):
+                result_day, result_minute, values = future.result()
+                map_values[result_day][str(result_minute)] = values
 
     return {
         "generated_at_utc": generated_at.isoformat() + "Z",
