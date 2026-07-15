@@ -49,6 +49,15 @@ function selectedRow() {
   return customLocationRow(state.date, state.minute);
 }
 
+function selectedEventRow(dateText = state.date, minute = state.minute) {
+  if (state.data.location_rows[state.location]?.[dateText]?.[String(minute)]) {
+    return state.data.location_rows[state.location][dateText][String(minute)];
+  }
+  const loc = selectedLocation();
+  const nearest = nearestLocation(loc.latitude, loc.longitude);
+  return state.data.location_rows[nearest.name]?.[dateText]?.[String(minute)] || selectedRow();
+}
+
 function metricValue(row, metric = state.metric) {
   if (!row) return null;
   return metric === "yallop" ? row.yallop_score : row.odeh_score;
@@ -61,7 +70,8 @@ function metricRawValue(row, metric = state.metric) {
 
 function metricLabel(row, metric = state.metric) {
   if (!row) return "--";
-  return metric === "yallop" ? row.yallop_label : row.odeh_label;
+  if (metric === "yallop") return row.yallop_label || bandName(row, metric);
+  return row.odeh_label || bandName(row, metric);
 }
 
 function bandName(row, metric = state.metric) {
@@ -136,6 +146,7 @@ function instantRows() {
 
 function dayRows() {
   const best = new Map();
+  const constrained = new Map();
   const mapMinutes = state.data.map_minutes || state.data.minutes;
   mapMinutes.forEach((minute) => {
     mapRowsForUtc(state.date, minute).forEach((row) => {
@@ -144,9 +155,33 @@ function dayRows() {
       if (!current || value > metricValue(current)) {
         best.set(row.id, { ...row, best_minute: minute, best_utc_date: state.date, utc_date: state.date, utc_minute: minute });
       }
+      if (isConstrainedSample(row)) {
+        const currentConstrained = constrained.get(row.id);
+        if (!currentConstrained || value > metricValue(currentConstrained)) {
+          constrained.set(row.id, { ...row, constrained_best_minute: minute, constrained_best_utc_date: state.date });
+        }
+      }
     });
   });
-  return [...best.values()];
+  return [...best.values()].map((row) => {
+    const constrainedRow = constrained.get(row.id);
+    return constrainedRow
+      ? {
+          ...row,
+          constrained_best_minute: constrainedRow.constrained_best_minute,
+          constrained_best_utc_date: constrainedRow.constrained_best_utc_date,
+          constrained_best_score: metricValue(constrainedRow),
+          constrained_best_label: bandName(constrainedRow),
+        }
+      : row;
+  });
+}
+
+function isConstrainedSample(row) {
+  return row
+    && Number(row.moon_altitude_deg) > 0
+    && Number(row.sun_altitude_deg) < 0
+    && Number(row.moon_age_days) >= 0;
 }
 
 function nearestMapRow(rows, lat, lon) {
@@ -176,8 +211,7 @@ function currentMapRows() {
   if (state.mapView === "day") return dayRows();
   const rows = instantRows();
   if (state.mapView !== "slice") return rows;
-  const loc = selectedLocation();
-  return rows.filter((row) => row.type !== "grid" || Math.abs(row.latitude - loc.latitude) <= 10 || Math.abs(row.longitude - loc.longitude) <= 15);
+  return rows;
 }
 
 function setupControls() {
@@ -235,6 +269,8 @@ function setupControls() {
   locationSelect.addEventListener("change", (event) => {
     state.customLocation = null;
     state.location = event.target.value;
+    el("remoteSuggestions").hidden = true;
+    event.target.blur();
     render();
   });
   el("locationSearch").addEventListener("change", applyLocationSearch);
@@ -267,6 +303,11 @@ function setupControls() {
   el("timePrev").addEventListener("click", () => setTimeByIndex(data.minutes.indexOf(state.minute) - 1));
   el("timeNext").addEventListener("click", () => setTimeByIndex(data.minutes.indexOf(state.minute) + 1));
   el("currentButton").addEventListener("click", useCurrent);
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest(".search-field")) {
+      el("remoteSuggestions").hidden = true;
+    }
+  });
   document.querySelectorAll(".tab-button").forEach((button) => {
     button.addEventListener("click", () => {
       state.mapView = button.dataset.view;
@@ -298,6 +339,8 @@ function applyLocationSearch() {
     state.customLocation = null;
     state.location = location.name;
     el("locationSelect").value = state.location;
+    el("remoteSuggestions").hidden = true;
+    el("locationSearch").blur();
     el("locationSearchStatus").textContent = `Using ${location.name}`;
     render();
     return;
@@ -308,6 +351,8 @@ function applyLocationSearch() {
     state.customLocation = null;
     state.location = nearest.name;
     el("locationSelect").value = state.location;
+    el("remoteSuggestions").hidden = true;
+    el("locationSearch").blur();
     el("locationSearchStatus").textContent = `${point.name} is a map calculation point; using nearest preset ${nearest.name} for charts.`;
     render();
     return;
@@ -375,6 +420,7 @@ function selectRemoteFeature(feature) {
   setCustomLocationOption(name);
   el("locationSearch").value = name;
   el("remoteSuggestions").hidden = true;
+  el("locationSearch").blur();
   el("locationSearchStatus").textContent = `Using address result near ${fmt(lat, 4)}, ${fmt(lon, 4)}; time zone uses your browser offset.`;
   render();
 }
@@ -458,26 +504,52 @@ function displayTime(utcText, offsetHours = selectedLocation().utc_offset_hours)
   return `${local.toISOString().slice(0, 16).replace("T", " ")} location`;
 }
 
+function utcToLocalParts(utcText, offsetHours = selectedLocation().utc_offset_hours) {
+  if (!utcText) return null;
+  const text = utcText.endsWith("Z") ? utcText : `${utcText}Z`;
+  const utc = new Date(text);
+  if (Number.isNaN(utc.getTime())) return null;
+  const local = new Date(utc.getTime() + offsetHours * 3600 * 1000);
+  return {
+    date: local.toISOString().slice(0, 10),
+    minute: local.getUTCHours() * 60 + local.getUTCMinutes(),
+    label: local.toISOString().slice(11, 16),
+  };
+}
+
+function localEventMinute(utcText, dateText = state.date) {
+  const parts = utcToLocalParts(utcText);
+  return parts && parts.date === dateText ? parts.minute : null;
+}
+
+function shortEventTime(utcText) {
+  const parts = utcToLocalParts(utcText);
+  if (!parts) return "--";
+  return parts.date === state.date ? parts.label : `${parts.date.slice(5)} ${parts.label}`;
+}
+
 function definitionButton(term) {
   return `<span class="def-tip" tabindex="0" role="button" data-tip="${DEFINITIONS[term]}" aria-label="${term} definition">i</span>`;
 }
 
 function renderCards(row) {
+  const events = selectedEventRow();
   el("bandCard").textContent = bandName(row);
   el("bandCard").style.color = colorFor(row);
   el("labelCard").textContent = `${state.data.metrics[state.metric].label}: ${metricLabel(row)} (${state.metric === "yallop" ? "q" : "V"} ${fmt(metricRawValue(row), 3)})`;
-  el("birthCard").textContent = row.moon_birth_utc || "--";
-  el("nextBirthCard").textContent = `Next birth: ${row.next_moon_birth_utc || "--"}`;
-  el("setCard").textContent = `${displayTime(row.sunset_utc)} / ${displayTime(row.moonset_utc)}`;
-  el("lagCard").textContent = `Moon lag: ${fmt(row.moon_lag_minutes, 1)} min`;
-  el("gateCard").textContent = row.islamic_geometry_gate ? "Pass" : "Fail";
-  el("gateCard").style.color = row.islamic_geometry_gate ? "var(--ok)" : "var(--bad)";
-  el("gateDetailCard").textContent = `Born before sunset: ${row.moon_born_before_sunset ? "yes" : "no"}; moonset after sunset: ${row.moonset_after_sunset ? "yes" : "no"}`;
+  el("birthCard").textContent = displayTime(events.moon_birth_utc);
+  el("nextBirthCard").textContent = `Next birth: ${displayTime(events.next_moon_birth_utc)}`;
+  el("setCard").textContent = `${displayTime(events.sunset_utc)} / ${displayTime(events.moonset_utc)}`;
+  el("lagCard").textContent = `Moon lag: ${fmt(events.moon_lag_minutes, 1)} min`;
+  el("gateCard").textContent = events.islamic_geometry_gate ? "Pass" : "Fail";
+  el("gateCard").style.color = events.islamic_geometry_gate ? "var(--ok)" : "var(--bad)";
+  el("gateDetailCard").textContent = `Born before sunset: ${events.moon_born_before_sunset ? "yes" : "no"}; moonset after sunset: ${events.moonset_after_sunset ? "yes" : "no"}`;
 }
 
 function renderDetails(row) {
   const loc = selectedLocation();
   const utc = localToUtcParts(state.date, state.minute, loc.utc_offset_hours);
+  const events = selectedEventRow();
   const details = [
     ["Latitude", fmt(row.latitude, 3)],
     ["Longitude", fmt(row.longitude, 3)],
@@ -491,8 +563,11 @@ function renderDetails(row) {
     ["Odeh V", fmt(row.odeh_v, 3)],
     ["Illumination", `${fmt((row.moon_illumination_fraction || 0) * 100, 2)}%`],
     ["Moon age", `${fmt(row.moon_age_days, 2)} days`],
-    ["Moon lag", `${fmt(row.moon_lag_minutes, 1)} min`],
-    ["Geometry gate", row.islamic_geometry_gate ? "Pass" : "Fail"],
+    ["Moon birth", displayTime(events.moon_birth_utc)],
+    ["Sunset", displayTime(events.sunset_utc)],
+    ["Moonset", displayTime(events.moonset_utc)],
+    ["Moon lag", `${fmt(events.moon_lag_minutes, 1)} min`],
+    ["Geometry gate", events.islamic_geometry_gate ? "Pass" : "Fail"],
   ];
   el("positionText").textContent = `${state.location}, ${state.date} ${state.data.minute_labels[String(state.minute)]} location time; map UTC ${utc.date} ${state.data.minute_labels[String(utc.minute)]}`;
   el("detailList").innerHTML = details.map(([key, value]) => `<dt>${key} ${DEFINITIONS[key] ? definitionButton(key) : ""}</dt><dd>${value}</dd>`).join("");
@@ -740,7 +815,7 @@ function attachMapTooltip() {
       ${state.metric === "yallop" ? "q" : "V"} ${fmt(metricRawValue(p), 3)}<br>
       Moon alt ${fmt(p.moon_altitude_deg, 1)} deg; Sun alt ${fmt(p.sun_altitude_deg, 1)} deg<br>
       ARCV ${fmt(p.moon_arc_of_vision_deg, 2)} deg; DAZ ${fmt(p.moon_relative_azimuth_deg, 2)} deg<br>
-      W ${fmt(p.moon_crescent_width_arcmin, 3)} arcmin${state.mapView === "day" ? `<br>Best UTC time ${p.best_utc_date || p.utc_date || state.date} ${state.data.minute_labels[String(p.best_minute)]}` : ""}
+      W ${fmt(p.moon_crescent_width_arcmin, 3)} arcmin${state.mapView === "day" ? `<br>Best UTC time ${p.best_utc_date || p.utc_date || state.date} ${state.data.minute_labels[String(p.best_minute)]}<br>Best constrained UTC ${p.constrained_best_minute !== undefined ? `${p.constrained_best_utc_date} ${state.data.minute_labels[String(p.constrained_best_minute)]} (${p.constrained_best_label})` : "none in sampled day"}` : ""}
     `;
   };
   canvas.addEventListener("mousemove", show);
@@ -748,7 +823,7 @@ function attachMapTooltip() {
   canvas.addEventListener("mouseleave", () => { tooltip.hidden = true; });
 }
 
-function chart(svg, rows, xLabels, valueFn = (row) => metricValue(row)) {
+function chart(svg, rows, xLabels, valueFn = (row) => metricValue(row), options = {}) {
   const width = 760;
   const height = 320;
   const pad = { left: 48, right: 18, top: 18, bottom: 44 };
@@ -759,17 +834,46 @@ function chart(svg, rows, xLabels, valueFn = (row) => metricValue(row)) {
   const y = (v) => height - pad.bottom - ((v - min) / Math.max(1, max - min)) * (height - pad.top - pad.bottom);
   const circles = rows.map((row, i) => `<circle cx="${x(i)}" cy="${y(valueFn(row) || 0)}" r="4" fill="${colorFor(row)}"><title>${xLabels[i]}: ${bandName(row)}</title></circle>`).join("");
   const labels = xLabels.map((label, i) => i % Math.ceil(xLabels.length / 8) === 0 ? `<text x="${x(i)}" y="${height - 18}" text-anchor="middle" font-size="11" fill="#596675">${label}</text>` : "").join("");
+  const eventMarkers = (options.events || []).map((event) => {
+    if (event.minute === null || event.minute === undefined) return "";
+    const markerX = pad.left + (event.minute / (24 * 60 - 60)) * (width - pad.left - pad.right);
+    return `
+      <line x1="${markerX}" y1="${pad.top}" x2="${markerX}" y2="${height - pad.bottom}" stroke="${event.color}" stroke-width="1.5" stroke-dasharray="4 4"/>
+      <text x="${markerX + 4}" y="${pad.top + event.offset}" font-size="11" fill="${event.color}">${event.label}</text>
+    `;
+  }).join("");
+  const bestNote = options.best
+    ? `<text x="${pad.left}" y="14" font-size="11" fill="#18212f">${options.best}</text>`
+    : "";
+  const eventNote = options.eventNote
+    ? `<text x="${width - pad.right}" y="14" text-anchor="end" font-size="11" fill="#596675">${options.eventNote}</text>`
+    : "";
   svg.innerHTML = `
     <line x1="${pad.left}" y1="${height - pad.bottom}" x2="${width - pad.right}" y2="${height - pad.bottom}" stroke="#cbd5e1"/>
     <line x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${height - pad.bottom}" stroke="#cbd5e1"/>
+    ${eventMarkers}
     ${circles}
     ${labels}
+    ${bestNote}
+    ${eventNote}
   `;
 }
 
 function renderCharts() {
   const timeRows = state.data.minutes.map((minute) => state.customLocation ? customLocationRow(state.date, minute) : state.data.location_rows[state.location][state.date][String(minute)]);
-  chart(el("timeChart"), timeRows, state.data.minutes.map((minute) => state.data.minute_labels[String(minute)]));
+  const eventRow = selectedEventRow();
+  const bestRow = [...timeRows].sort((a, b) => metricValue(b) - metricValue(a))[0];
+  const constrainedBest = timeRows.filter(isConstrainedSample).sort((a, b) => metricValue(b) - metricValue(a))[0];
+  const eventOptions = {
+    events: [
+      { label: "Birth", minute: localEventMinute(eventRow.moon_birth_utc), color: "#0f766e", offset: 12 },
+      { label: "Sunset", minute: localEventMinute(eventRow.sunset_utc), color: "#b45309", offset: 26 },
+      { label: "Moonset", minute: localEventMinute(eventRow.moonset_utc), color: "#4f46e5", offset: 40 },
+    ],
+    best: `Best ${bestRow?.local_time || "--"}; constrained ${constrainedBest?.local_time || "--"}`,
+    eventNote: `Birth ${shortEventTime(eventRow.moon_birth_utc)} | Sunset ${shortEventTime(eventRow.sunset_utc)} | Moonset ${shortEventTime(eventRow.moonset_utc)}`,
+  };
+  chart(el("timeChart"), timeRows, state.data.minutes.map((minute) => state.data.minute_labels[String(minute)]), (row) => metricValue(row), eventOptions);
 
   const loc = selectedLocation();
   const instant = instantRows();
@@ -834,12 +938,12 @@ function renderMapText() {
   const titles = {
     instant: "Selected Date + Time Visibility",
     day: "Best Visibility Across Selected Date",
-    slice: "Selected Date + Time Lat/Lon Sweep",
+    slice: "Selected Date + Time Across All Lat/Lon",
   };
   const subtitles = {
     instant: "Country, state, capital city, major city, and grid points at the selected instant.",
     day: "Each point shows its best visibility band across the selected UTC date from 00:00 to 24:00.",
-    slice: "15 degree latitude/longitude grid points near the selected latitude and longitude are emphasized.",
+    slice: "All precomputed country, state, capital, city, and 15 degree grid points at the selected UTC instant.",
   };
   el("mapTitle").textContent = titles[state.mapView];
   el("mapSubtitle").textContent = subtitles[state.mapView];

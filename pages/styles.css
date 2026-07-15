@@ -74,9 +74,10 @@ nav a[aria-current="page"] {
 }
 
 main {
-  max-width: 1480px;
+  width: 100%;
+  max-width: none;
   margin: 0 auto;
-  padding: 24px;
+  padding: 20px;
 }
 
 .controls,
@@ -114,7 +115,7 @@ label,
 select,
 input,
 button {
-  min-height: 38px;
+  min-height: 42px;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: #ffffff;
@@ -125,7 +126,7 @@ button {
 select,
 button,
 input[type="search"] {
-  padding: 0 12px;
+  padding: 0 14px;
 }
 
 button {
@@ -146,14 +147,14 @@ input:hover {
 
 .time-control {
   display: grid;
-  grid-template-columns: 38px minmax(130px, 1fr) 38px;
+  grid-template-columns: 42px minmax(130px, 1fr) 42px;
   gap: 8px;
   align-items: center;
 }
 
 .time-control button,
 .def {
-  padding: 0;
+  padding: 0 8px;
 }
 
 .time-field select,
@@ -296,6 +297,7 @@ input:hover {
 
 .tab-button {
   min-height: 44px;
+  padding: 8px 14px;
 }
 
 .tab-button.active {
@@ -305,7 +307,7 @@ input:hover {
 }
 
 .split {
-  grid-template-columns: minmax(0, 2fr) minmax(340px, 1fr);
+  grid-template-columns: minmax(0, 2.35fr) minmax(340px, 0.9fr);
   margin-bottom: 16px;
 }
 
@@ -515,7 +517,7 @@ pre {
   }
 
   main {
-    padding: 14px;
+    padding: 12px;
   }
 
   .panel-title {
@@ -552,7 +554,7 @@ pre {
   }
 
   .time-control {
-    grid-template-columns: 36px minmax(0, 1fr) 36px;
+    grid-template-columns: 40px minmax(0, 1fr) 40px;
   }
 
   .legend span {
