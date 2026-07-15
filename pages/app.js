@@ -609,8 +609,16 @@ function renderCharts() {
   const lonRows = gridRows
     .filter((row) => row.latitude === nearestLat)
     .sort((a, b) => a.longitude - b.longitude);
-  chart(el("latChart"), latRows, latRows.map((row) => fmt(row.latitude, 0)));
-  chart(el("lonChart"), lonRows, lonRows.map((row) => fmt(row.longitude, 0)));
+  const latFallback = instant
+    .filter((row) => row.type !== "grid" && Math.abs(row.longitude - loc.longitude) <= 35)
+    .sort((a, b) => a.latitude - b.latitude);
+  const lonFallback = instant
+    .filter((row) => row.type !== "grid" && Math.abs(row.latitude - loc.latitude) <= 25)
+    .sort((a, b) => a.longitude - b.longitude);
+  const finalLatRows = latRows.length ? latRows : latFallback;
+  const finalLonRows = lonRows.length ? lonRows : lonFallback;
+  chart(el("latChart"), finalLatRows, finalLatRows.map((row) => fmt(row.latitude, 0)));
+  chart(el("lonChart"), finalLonRows, finalLonRows.map((row) => fmt(row.longitude, 0)));
 }
 
 function renderCalendar() {
