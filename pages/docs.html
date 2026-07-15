@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Crescent Visibility Docs</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Documentation</p>
+        <h1>Crescent Visibility</h1>
+      </div>
+      <nav>
+        <a href="index.html">Dashboard</a>
+        <a href="docs.html" aria-current="page">Docs</a>
+        <a href="docs/CRESCENT_VISIBILITY.md">Raw docs</a>
+      </nav>
+    </header>
+    <main>
+      <section class="panel docs-page">
+        <div class="panel-title">
+          <h2>Model, Astronomy, Sources, and Limitations</h2>
+          <p>Generated from the repository documentation.</p>
+        </div>
+        <pre id="docsText">Loading documentation...</pre>
+      </section>
+    </main>
+    <script>
+      fetch("docs/CRESCENT_VISIBILITY.md")
+        .then((response) => response.text())
+        .then((text) => {
+          document.getElementById("docsText").textContent = text;
+        })
+        .catch((error) => {
+          document.getElementById("docsText").textContent = String(error);
+        });
+    </script>
+  </body>
+</html>

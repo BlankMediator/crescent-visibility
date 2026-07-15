@@ -13,19 +13,25 @@
         <h1>Crescent Visibility</h1>
       </div>
       <nav>
-        <a href="#dashboard">Dashboard</a>
-        <a href="#docs">Docs</a>
+        <a href="index.html" aria-current="page">Dashboard</a>
+        <a href="docs.html">Docs</a>
         <a href="docs/CRESCENT_VISIBILITY.md">Raw docs</a>
       </nav>
     </header>
 
     <main id="dashboard">
       <section class="controls" aria-label="Controls">
+        <label class="search-field">
+          Search location
+          <input id="locationSearch" type="search" list="locationSuggestions" placeholder="City, country, suburb, or address text">
+          <datalist id="locationSuggestions"></datalist>
+          <small id="locationSearchStatus"></small>
+        </label>
         <label>
           Location
           <select id="locationSelect"></select>
         </label>
-        <button id="currentButton" type="button" title="Use browser date, time, and location when available.">Use current</button>
+        <button id="currentButton" type="button" title="Use browser date, time, time zone, and location when available.">Use current</button>
         <label>
           Date
           <select id="dateSelect"></select>
@@ -33,11 +39,11 @@
         <div class="control-field time-field">
           <span>Time sweep</span>
           <div class="time-control">
-            <button id="timePrev" type="button" title="Previous time" aria-label="Previous time">&lt;</button>
-            <input id="timeSlider" type="range" min="0" max="0" step="1" value="0">
-            <button id="timeNext" type="button" title="Next time" aria-label="Next time">&gt;</button>
+            <button id="timePrev" type="button" title="Previous hour" aria-label="Previous hour">&lt;</button>
+            <input id="timeSlider" type="range" min="0" max="23" step="1" value="0">
+            <button id="timeNext" type="button" title="Next hour" aria-label="Next hour">&gt;</button>
           </div>
-          <select id="timeSelect" aria-label="Select time"></select>
+          <select id="timeSelect" aria-label="Select hour"></select>
           <span id="timeLabel"></span>
         </div>
         <label>
@@ -49,16 +55,27 @@
           Projection
           <select id="projectionSelect">
             <option value="equirectangular">Plate Carree</option>
+            <option value="robinson">Robinson</option>
+            <option value="mollweide">Mollweide</option>
+            <option value="equalEarth">Equal Earth</option>
             <option value="orthographic">Orthographic</option>
           </select>
         </label>
         <button class="info" type="button" data-info="projection" aria-label="Projection info">i</button>
+        <label>
+          Display time zone
+          <select id="timezoneSelect">
+            <option value="location">Selected location</option>
+            <option value="browser">Browser local</option>
+            <option value="utc">UTC</option>
+          </select>
+        </label>
       </section>
 
       <section class="status-grid">
         <article>
-          <span>Metric result</span>
-          <strong id="scoreCard">--</strong>
+          <span>Visibility band</span>
+          <strong id="bandCard">--</strong>
           <small id="labelCard">--</small>
         </article>
         <article>
@@ -67,7 +84,7 @@
           <small id="nextBirthCard">--</small>
         </article>
         <article>
-          <span>Sunset / moonset UTC</span>
+          <span>Sunset / moonset</span>
           <strong id="setCard">--</strong>
           <small id="lagCard">--</small>
         </article>
@@ -78,11 +95,25 @@
         </article>
       </section>
 
+      <section class="panel">
+        <div class="panel-title">
+          <h2>Visibility Bands</h2>
+          <p>Colour is the primary signal; numeric q/V values are in tooltips and details.</p>
+        </div>
+        <div id="legend" class="legend"></div>
+      </section>
+
+      <section class="tabs" aria-label="Map views">
+        <button class="tab-button active" type="button" data-view="instant">Selected Date + Time</button>
+        <button class="tab-button" type="button" data-view="day">Selected Date Across 24 Hours</button>
+        <button class="tab-button" type="button" data-view="slice">Date + Time Across Lat/Lon</button>
+      </section>
+
       <section class="split">
         <div class="panel map-panel">
           <div class="panel-title">
-            <h2>Earth Visibility Map</h2>
-            <p>Hover sampled positions for granular model details.</p>
+            <h2 id="mapTitle">Earth Visibility Map</h2>
+            <p id="mapSubtitle">Country, city, and grid calculation points are included.</p>
           </div>
           <canvas id="mapCanvas" width="1120" height="560"></canvas>
           <div id="tooltip" class="tooltip" hidden></div>
@@ -99,34 +130,35 @@
       <section class="split">
         <div class="panel">
           <div class="panel-title">
-            <h2>Visibility Across Time</h2>
-            <p>Same location and date, swept across the local evening.</p>
+            <h2>Visibility Across 24 Hours</h2>
+            <p>Selected location and calendar date.</p>
           </div>
-          <svg id="timeChart" viewBox="0 0 720 320" role="img" aria-label="Visibility over time"></svg>
+          <svg id="timeChart" viewBox="0 0 760 320" role="img" aria-label="Visibility over 24 hours"></svg>
         </div>
         <div class="panel">
           <div class="panel-title">
-            <h2>Visibility Across Date</h2>
-            <p>Same location and local time, swept across available dates.</p>
+            <h2>Gregorian Month Calendar</h2>
+            <p>Each day shaded by best visibility in the selected location.</p>
           </div>
-          <svg id="dateChart" viewBox="0 0 720 320" role="img" aria-label="Visibility over date"></svg>
+          <div id="calendarGrid" class="calendar-grid"></div>
         </div>
       </section>
 
-      <section class="panel model-panel">
-        <div class="panel-title">
-          <h2>Model Status</h2>
-          <p>The dropdown names state whether each metric is real formula-based, exploratory, or legacy.</p>
+      <section class="split">
+        <div class="panel">
+          <div class="panel-title">
+            <h2>Latitude Sweep</h2>
+            <p>Same longitude, selected date and time.</p>
+          </div>
+          <svg id="latChart" viewBox="0 0 760 260" role="img" aria-label="Latitude sweep"></svg>
         </div>
-        <div id="modelStatus" class="model-status"></div>
-      </section>
-
-      <section id="docs" class="panel docs-panel">
-        <div class="panel-title">
-          <h2>Documentation</h2>
-          <p>Implementation notes, model formulas, sources, limitations, and sighting gates.</p>
+        <div class="panel">
+          <div class="panel-title">
+            <h2>Longitude Sweep</h2>
+            <p>Same latitude, selected date and time.</p>
+          </div>
+          <svg id="lonChart" viewBox="0 0 760 260" role="img" aria-label="Longitude sweep"></svg>
         </div>
-        <pre id="docsText">Loading documentation...</pre>
       </section>
     </main>
 
