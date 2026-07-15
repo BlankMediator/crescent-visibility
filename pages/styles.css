@@ -92,7 +92,8 @@ main {
   border-radius: 8px;
 }
 
-label {
+label,
+.control-field {
   display: grid;
   gap: 6px;
   color: var(--muted);
@@ -109,6 +110,21 @@ button {
   background: #ffffff;
   color: var(--ink);
   font: inherit;
+}
+
+.time-control {
+  display: grid;
+  grid-template-columns: 38px minmax(130px, 1fr) 38px;
+  gap: 8px;
+  align-items: center;
+}
+
+.time-control button {
+  padding: 0;
+}
+
+.time-field select {
+  width: 100%;
 }
 
 select,

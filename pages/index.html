@@ -30,11 +30,16 @@
           Date
           <select id="dateSelect"></select>
         </label>
-        <label>
-          Time sweep
-          <input id="timeSlider" type="range" min="0" max="0" value="0">
+        <div class="control-field time-field">
+          <span>Time sweep</span>
+          <div class="time-control">
+            <button id="timePrev" type="button" title="Previous time" aria-label="Previous time">&lt;</button>
+            <input id="timeSlider" type="range" min="0" max="0" step="1" value="0">
+            <button id="timeNext" type="button" title="Next time" aria-label="Next time">&gt;</button>
+          </div>
+          <select id="timeSelect" aria-label="Select time"></select>
           <span id="timeLabel"></span>
-        </label>
+        </div>
         <label>
           Visibility metric
           <select id="metricSelect"></select>

@@ -53,6 +53,28 @@ function selectedGrid() {
   return state.data.map_grids[state.date][String(state.minute)];
 }
 
+function syncTimeControls() {
+  const index = Math.max(0, state.data.minutes.indexOf(state.minute));
+  const slider = el("timeSlider");
+  const select = el("timeSelect");
+  slider.value = String(index);
+  select.value = String(state.minute);
+  el("timeLabel").textContent = state.data.minute_labels[String(state.minute)];
+  el("timePrev").disabled = index <= 0;
+  el("timeNext").disabled = index >= state.data.minutes.length - 1;
+}
+
+function setTimeByIndex(index) {
+  const clamped = Math.max(0, Math.min(state.data.minutes.length - 1, Number(index)));
+  state.minute = state.data.minutes[clamped];
+  render();
+}
+
+function setTimeByMinute(minute) {
+  const index = state.data.minutes.indexOf(Number(minute));
+  if (index >= 0) setTimeByIndex(index);
+}
+
 function setupControls() {
   const data = state.data;
   const locationSelect = el("locationSelect");
@@ -79,6 +101,14 @@ function setupControls() {
     metricSelect.appendChild(option);
   });
 
+  const timeSelect = el("timeSelect");
+  data.minutes.forEach((minute) => {
+    const option = document.createElement("option");
+    option.value = String(minute);
+    option.textContent = data.minute_labels[String(minute)];
+    timeSelect.appendChild(option);
+  });
+
   state.location = data.locations[0].name;
   state.date = data.dates[2] || data.dates[0];
   state.minute = data.minutes[2] || data.minutes[0];
@@ -88,7 +118,7 @@ function setupControls() {
   metricSelect.value = state.metric;
   el("timeSlider").min = "0";
   el("timeSlider").max = String(data.minutes.length - 1);
-  el("timeSlider").value = String(data.minutes.indexOf(state.minute));
+  syncTimeControls();
 
   locationSelect.addEventListener("change", (event) => {
     state.location = event.target.value;
@@ -106,10 +136,11 @@ function setupControls() {
     state.projection = event.target.value;
     render();
   });
-  el("timeSlider").addEventListener("input", (event) => {
-    state.minute = data.minutes[Number(event.target.value)];
-    render();
-  });
+  el("timeSlider").addEventListener("input", (event) => setTimeByIndex(event.target.value));
+  el("timeSlider").addEventListener("change", (event) => setTimeByIndex(event.target.value));
+  timeSelect.addEventListener("change", (event) => setTimeByMinute(event.target.value));
+  el("timePrev").addEventListener("click", () => setTimeByIndex(data.minutes.indexOf(state.minute) - 1));
+  el("timeNext").addEventListener("click", () => setTimeByIndex(data.minutes.indexOf(state.minute) + 1));
   el("currentButton").addEventListener("click", useCurrent);
   document.querySelectorAll(".info").forEach((button) => {
     button.addEventListener("click", () => showInfo(button.dataset.info));
@@ -129,7 +160,7 @@ function useCurrent() {
   state.date = closestDate;
   state.minute = closestMinute;
   el("dateSelect").value = state.date;
-  el("timeSlider").value = String(state.data.minutes.indexOf(state.minute));
+  syncTimeControls();
 
   if (navigator.geolocation) {
     navigator.geolocation.getCurrentPosition((pos) => {
@@ -383,7 +414,7 @@ function renderModelStatus() {
 }
 
 function render() {
-  el("timeLabel").textContent = state.data.minute_labels[String(state.minute)];
+  syncTimeControls();
   renderCards(selectedRow());
   renderDetails(selectedRow());
   drawMap();
