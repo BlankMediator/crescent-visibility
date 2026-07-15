@@ -14,6 +14,7 @@
       </div>
       <nav>
         <a href="index.html" aria-current="page">Dashboard</a>
+        <a href="months.html">Months</a>
         <a href="docs.html">Docs</a>
       </nav>
     </header>
@@ -69,6 +70,13 @@
             <option value="utc">UTC</option>
           </select>
         </label>
+        <label>
+          Map shading
+          <select id="mapShadingSelect">
+            <option value="shaded">Shaded bands</option>
+            <option value="points">Points only</option>
+          </select>
+        </label>
       </section>
 
       <section class="status-grid">
@@ -106,7 +114,8 @@
         <button class="tab-button active" type="button" data-view="day">Best On Selected Date</button>
         <button class="tab-button" type="button" data-view="instant">Selected Date + Time</button>
         <button class="tab-button" type="button" data-view="slice">Date + Time Across Lat/Lon</button>
-        <button class="tab-button" type="button" data-view="first">First Visibility Yallop</button>
+        <button class="tab-button" type="button" data-view="firstYallop">Moonsighting Australia / Yallop</button>
+        <button class="tab-button" type="button" data-view="firstOdeh">ICOP / Odeh</button>
       </section>
 
       <section class="split">
@@ -150,14 +159,14 @@
             <h2>Latitude Bands</h2>
             <p>All longitudes, selected date and time.</p>
           </div>
-          <svg id="latChart" viewBox="0 0 760 260" role="img" aria-label="Latitude sweep"></svg>
+          <svg id="latChart" viewBox="0 0 760 520" role="img" aria-label="Latitude sweep"></svg>
         </div>
         <div class="panel">
           <div class="panel-title">
             <h2>Longitude Bands</h2>
             <p>All latitudes, selected date and time.</p>
           </div>
-          <svg id="lonChart" viewBox="0 0 760 260" role="img" aria-label="Longitude sweep"></svg>
+          <svg id="lonChart" viewBox="0 0 760 520" role="img" aria-label="Longitude sweep"></svg>
         </div>
       </section>
     </main>

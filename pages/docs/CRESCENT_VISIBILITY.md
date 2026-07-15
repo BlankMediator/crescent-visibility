@@ -46,6 +46,16 @@ until they can be represented as real sourced implementations rather than legacy
    Morocco", arXiv: https://arxiv.org/abs/2503.21634. This paper summarizes the ARCV/W feature
    family and related modern crescent-visibility modelling terms.
 
+4. R. H. van Gent, "Global Lunar Crescent Visibility Maps Based on the Yallop Algorithm",
+   https://webspace.science.uu.nl/~gent0113/islam/islam_lunvis_method.htm. This site documents
+   the Yallop q bands, the sunset plus 4/9 sunset-to-moonset best-time convention, Mercator map
+   presentation, and the common masks for moonset before sunset and before conjunction.
+
+5. Moonsighting.com, "Crescent Moon Visibility Maps", https://www.moonsighting.com/visibility.html.
+   This site publishes historical/future visibility-curve image sets by Hijri month. Hilaal uses it
+   as a visual and calendar-layout reference, but does not claim to implement a separate
+   Moonsighting.com criterion until a reproducible formula is added.
+
 ## Astronomy Engine
 
 Astronomy values are calculated with Skyfield and the DE421 ephemeris. The engine uses
@@ -220,7 +230,7 @@ Odeh bands:
 
 ## Maps And Point Types
 
-The public site renders four map modes:
+The public site renders five map modes:
 
 - Best On Selected Date: each point is shaded by its best visibility band over the selected UTC
   date from 00:00 through the precomputed hourly samples for that date. Tooltips show the UTC hour
@@ -229,7 +239,7 @@ The public site renders four map modes:
   "where would the crescent be visible at this exact moment" mode.
 - Date + Time Across Lat/Lon: grid points near the selected latitude and longitude are emphasized,
   with latitude and longitude sweep charts shown below the map.
-- First Visibility Yallop: a separate Van Gent-style view for comparison with traditional first
+- Moonsighting Australia / Yallop: a separate Van Gent-style view for comparison with traditional first
   lunar-crescent visibility charts. For each point and selected local date, the app calculates
   local sunset and moonset, evaluates Yallop at:
 
@@ -264,6 +274,15 @@ best time = sunset + 4/9 * (moonset - sunset)
   moonset-before-sunset areas. Hilaal's fourth view is an independent implementation of that
   convention using this repository's Skyfield calculations and point grid.
 
+- ICOP / Odeh: uses the same local-date best-time event, masks, and point grid as the Yallop
+  first-visibility chart, but classifies the best-time sample with Odeh V bands. This makes the
+  map directly comparable to the Yallop first-visibility chart while preserving Odeh's published
+  ARCV/W thresholds.
+
+The `Map shading` selector controls whether the map emphasizes filled 15 degree grid cells or
+calculation points. Shaded bands are closer to published crescent-visibility maps; points-only mode
+is useful when inspecting city/country/state calculation points.
+
 Map calculation points include:
 
 - latitude/longitude grid points at 15 degree intervals,
@@ -279,6 +298,29 @@ Country points are representative interior points, not official observation loca
 The visibility-across-date view is a Gregorian month calendar. Each day is shaded by the best
 visibility band found across the precomputed 24-hour day for the selected location and selected
 criterion.
+
+## Month Commencement Page
+
+The `Months` page is a first pass at modelled lunar-month commencement. It reads the same static
+first-visibility payload used by the map tabs and summarizes each Gregorian evening by:
+
+- the best Yallop first-visibility band on the global grid,
+- the best point and best UTC time,
+- moon birth UTC,
+- moon age and moon lag at the best point,
+- and the next Gregorian civil date if the payload contains a naked-eye visibility zone.
+
+This is not an official Hijri calendar. It currently covers the precomputed public payload month
+only. Extending it to a full Gregorian/Hijri year, or to 1900-2100, requires choosing a rule for
+which sighting zone controls commencement: local jurisdiction, Makkah, Australia, global naked-eye
+visibility, optical-aid visibility, or another standard. Once that rule is chosen, the same
+generator can batch the 28th/29th lunar-night candidate evenings for each lunation.
+
+## Chart Interpolation
+
+The 24-hour chart dots are the actual precomputed hourly samples. The line between the dots is a
+fitted cubic interpolation used only for readability. It does not add new calculation samples and
+should not be read as a separate astronomical evaluation at intermediate minutes.
 
 ## Time Zones
 

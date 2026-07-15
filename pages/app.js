@@ -6,6 +6,7 @@ const state = {
   metric: "yallop",
   projection: "equirectangular",
   mapView: "day",
+  mapShading: "shaded",
   timezoneMode: "browser",
   browserTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Browser local",
   browserOffsetHours: -new Date().getTimezoneOffset() / 60,
@@ -48,6 +49,12 @@ const FIRST_MASKS = {
   before_conjunction: { label: "Before conjunction", color: "#9c1bb4" },
   no_event: { label: "No local sunset/moonset event", color: "#94a3b8" },
 };
+const ODEH_FIRST_BANDS = [
+  { label: "D: Not visible", color: "#7f1d1d" },
+  { label: "C: Visible only with optical aid", color: "#f97316" },
+  { label: "B: Optical aid; may be naked-eye", color: "#eab308" },
+  { label: "A: Easily naked-eye visible", color: "#087443" },
+];
 
 function fmt(value, digits = 2) {
   if (value === null || value === undefined || Number.isNaN(value)) return "--";
@@ -112,13 +119,34 @@ function colorFor(row, metric = state.metric) {
 function firstBandName(row) {
   const status = FIRST_STATUS[row.first_visibility_status] || "no_event";
   if (status !== "ok") return FIRST_MASKS[status]?.label || "No first-visibility sample";
+  if (state.mapView === "firstOdeh") return ODEH_FIRST_BANDS[firstOdehScore(row)]?.label || "--";
   return FIRST_BANDS[row.van_gent_score]?.label || "--";
 }
 
 function firstColorFor(row) {
   const status = FIRST_STATUS[row.first_visibility_status] || "no_event";
   if (status !== "ok") return FIRST_MASKS[status]?.color || "#94a3b8";
+  if (state.mapView === "firstOdeh") return ODEH_FIRST_BANDS[firstOdehScore(row)]?.color || "#94a3b8";
   return FIRST_BANDS[row.van_gent_score]?.color || "#94a3b8";
+}
+
+function isFirstVisibilityView() {
+  return state.mapView === "firstYallop" || state.mapView === "firstOdeh";
+}
+
+function firstOdehV(row) {
+  const w = Math.max(Number(row.moon_crescent_width_arcmin) || 0, 0);
+  const threshold = -0.1018 * (w ** 3) + 0.7319 * (w ** 2) - 6.3226 * w + 7.1651;
+  return Number(row.moon_arc_of_vision_deg) - threshold;
+}
+
+function firstOdehScore(row) {
+  const v = firstOdehV(row);
+  if (!Number.isFinite(v)) return 0;
+  if (v >= 5.65) return 3;
+  if (v >= 2.0) return 2;
+  if (v >= -0.96) return 1;
+  return 0;
 }
 
 function compactToRow(point, values, minute = state.minute) {
@@ -278,7 +306,7 @@ function customLocationRow(dateText, minute) {
 }
 
 function currentMapRows() {
-  if (state.mapView === "first") return firstVisibilityRows();
+  if (isFirstVisibilityView()) return firstVisibilityRows();
   if (state.mapView === "day") return dayRows();
   const rows = instantRows();
   if (state.mapView !== "slice") return rows;
@@ -324,6 +352,7 @@ function setupControls() {
   el("dateSelect").value = state.date;
   el("metricSelect").value = state.metric;
   el("timezoneSelect").value = state.timezoneMode;
+  el("mapShadingSelect").value = state.mapShading;
   el("timeSlider").min = "0";
   el("timeSlider").max = String(data.minutes.length - 1);
   syncTimeControls();
@@ -359,6 +388,10 @@ function setupControls() {
   });
   el("timezoneSelect").addEventListener("change", (event) => {
     state.timezoneMode = event.target.value;
+    render();
+  });
+  el("mapShadingSelect").addEventListener("change", (event) => {
+    state.mapShading = event.target.value;
     render();
   });
   el("timeSlider").addEventListener("input", (event) => setTimeByIndex(event.target.value));
@@ -796,6 +829,8 @@ function drawMap() {
   const ctx = canvas.getContext("2d");
   const width = canvas.width;
   const height = canvas.height;
+  const rows = currentMapRows();
+  const shaded = state.mapShading === "shaded";
   ctx.clearRect(0, 0, width, height);
   ctx.fillStyle = "#d9eef5";
   ctx.fillRect(0, 0, width, height);
@@ -814,23 +849,26 @@ function drawMap() {
 
   drawGraticule(ctx, width, height);
 
-  currentMapRows().filter((point) => point.type === "grid").forEach((point) => {
-    const xy = project(point.longitude, point.latitude, width, height);
-    if (!xy) return;
+  rows.filter((point) => point.type === "grid").forEach((point) => {
     ctx.save();
-    ctx.globalAlpha = 0.18;
+    ctx.globalAlpha = shaded ? (isFirstVisibilityView() ? 0.72 : 0.44) : 0.18;
     ctx.fillStyle = colorFor(point);
-    ctx.fillRect(xy[0] - 10, xy[1] - 10, 20, 20);
+    if (shaded) {
+      drawGridCell(ctx, point, width, height);
+    } else {
+      const xy = project(point.longitude, point.latitude, width, height);
+      if (xy) ctx.fillRect(xy[0] - 10, xy[1] - 10, 20, 20);
+    }
     ctx.restore();
   });
 
-  currentMapRows().forEach((point) => {
+  rows.forEach((point) => {
     const xy = project(point.longitude, point.latitude, width, height);
     if (!xy) return;
-    const radius = point.type === "city" ? 4.7 : point.type === "country" ? 3.7 : 2.8;
+    const radius = point.type === "city" ? 4.7 : point.type === "country" ? 3.7 : shaded && point.type === "grid" ? 1.7 : 2.8;
     ctx.beginPath();
     ctx.fillStyle = colorFor(point);
-    ctx.globalAlpha = point.type === "grid" ? 0.72 : 0.94;
+    ctx.globalAlpha = point.type === "grid" ? (shaded ? 0.52 : 0.72) : 0.94;
     ctx.arc(xy[0], xy[1], radius, 0, Math.PI * 2);
     ctx.fill();
     ctx.globalAlpha = 1;
@@ -852,6 +890,25 @@ function drawMap() {
   }
 
   if (state.projection === "orthographic") ctx.restore();
+}
+
+function drawGridCell(ctx, point, width, height) {
+  const halfLon = 7.5;
+  const halfLat = 7.5;
+  const west = Math.max(-180, point.longitude - halfLon);
+  const east = Math.min(180, point.longitude + halfLon);
+  const south = Math.max(-75, point.latitude - halfLat);
+  const north = Math.min(75, point.latitude + halfLat);
+  const corners = [[west, south], [east, south], [east, north], [west, north]];
+  const projected = corners.map(([lon, lat]) => project(lon, lat, width, height));
+  if (projected.some((xy) => !xy)) return;
+  ctx.beginPath();
+  projected.forEach((xy, index) => {
+    if (index === 0) ctx.moveTo(xy[0], xy[1]);
+    else ctx.lineTo(xy[0], xy[1]);
+  });
+  ctx.closePath();
+  ctx.fill();
 }
 
 function drawGraticule(ctx, width, height) {
@@ -940,14 +997,18 @@ function attachMapTooltip() {
     tooltip.style.left = `${Math.min(nearest.x + 16, canvas.clientWidth - 300)}px`;
     tooltip.style.top = `${Math.max(nearest.y + 16, 16)}px`;
     if (p.first_visibility_status !== undefined) {
+      const methodLabel = state.mapView === "firstOdeh" ? "ICOP / Odeh" : "Moonsighting Australia / Yallop";
+      const rawLine = state.mapView === "firstOdeh"
+        ? `V ${fmt(firstOdehV(p), 3)}; age ${fmt(p.moon_age_hours, 1)} h`
+        : `q ${fmt(p.yallop_q, 3)}; age ${fmt(p.moon_age_hours, 1)} h`;
       tooltip.innerHTML = `
         <strong>${p.name}</strong><br>
         ${p.type} point: ${fmt(p.latitude, 1)}, ${fmt(p.longitude, 1)}<br>
-        First visibility Yallop: ${firstBandName(p)}<br>
+        ${methodLabel}: ${firstBandName(p)}<br>
         Best time UTC ${p.best_datetime_utc || "--"}<br>
         Sunset ${displayTime(p.sunset_utc)}; moonset ${displayTime(p.moonset_utc)}<br>
         Moon birth ${displayTime(p.moon_birth_utc)}<br>
-        q ${fmt(p.yallop_q, 3)}; age ${fmt(p.moon_age_hours, 1)} h<br>
+        ${rawLine}<br>
         Moon alt ${fmt(p.moon_altitude_deg, 1)} deg; Sun alt ${fmt(p.sun_altitude_deg, 1)} deg<br>
         ARCV ${fmt(p.moon_arc_of_vision_deg, 2)} deg; DAZ ${fmt(p.moon_relative_azimuth_deg, 2)} deg<br>
         W ${fmt(p.moon_crescent_width_arcmin, 3)} arcmin
@@ -979,7 +1040,7 @@ function chart(svg, rows, xLabels, valueFn = (row) => metricValue(row), options 
   const min = Math.min(0, ...values);
   const x = (i) => pad.left + i * ((width - pad.left - pad.right) / Math.max(1, rows.length - 1));
   const y = (v) => height - pad.bottom - ((v - min) / Math.max(1, max - min)) * (height - pad.top - pad.bottom);
-  const path = rows.map((row, i) => `${i === 0 ? "M" : "L"} ${x(i)} ${y(valueFn(row) || 0)}`).join(" ");
+  const path = fittedVisibilityPath(rows, valueFn, x, y, min, max);
   const circles = rows.map((row, i) => `<circle cx="${x(i)}" cy="${y(valueFn(row) || 0)}" r="4" fill="${colorFor(row)}"><title>${xLabels[i]}: ${bandName(row)}</title></circle>`).join("");
   const labels = xLabels.map((label, i) => i % Math.ceil(xLabels.length / 8) === 0 ? `<text x="${x(i)}" y="${height - 18}" text-anchor="middle" font-size="11" fill="#596675">${label}</text>` : "").join("");
   const eventMarkers = (options.events || []).map((event) => {
@@ -1000,7 +1061,7 @@ function chart(svg, rows, xLabels, valueFn = (row) => metricValue(row), options 
     <line x1="${pad.left}" y1="${height - pad.bottom}" x2="${width - pad.right}" y2="${height - pad.bottom}" stroke="#cbd5e1"/>
     <line x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${height - pad.bottom}" stroke="#cbd5e1"/>
     ${eventMarkers}
-    <path d="${path}" fill="none" stroke="#334155" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    <path d="${path}" fill="none" stroke="#334155" stroke-width="2.3" stroke-linejoin="round" stroke-linecap="round"/>
     ${circles}
     ${labels}
     ${bestNote}
@@ -1008,27 +1069,59 @@ function chart(svg, rows, xLabels, valueFn = (row) => metricValue(row), options 
   `;
 }
 
+function fittedVisibilityPath(rows, valueFn, x, y, min, max) {
+  if (!rows.length) return "";
+  const values = rows.map((row) => Number(valueFn(row) ?? 0));
+  const clamp = (value) => Math.min(max, Math.max(min, value));
+  const catmullRom = (p0, p1, p2, p3, t) => {
+    const t2 = t * t;
+    const t3 = t2 * t;
+    return 0.5 * ((2 * p1) + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3);
+  };
+  let path = `M ${x(0)} ${y(values[0])}`;
+  for (let i = 0; i < values.length - 1; i += 1) {
+    const p0 = values[Math.max(0, i - 1)];
+    const p1 = values[i];
+    const p2 = values[i + 1];
+    const p3 = values[Math.min(values.length - 1, i + 2)];
+    for (let step = 1; step <= 10; step += 1) {
+      const t = step / 10;
+      const xi = x(i) + (x(i + 1) - x(i)) * t;
+      const localMin = Math.min(p0, p1, p2, p3);
+      const localMax = Math.max(p0, p1, p2, p3);
+      const v = Math.min(localMax, Math.max(localMin, clamp(catmullRom(p0, p1, p2, p3, t))));
+      path += ` L ${xi} ${y(v)}`;
+    }
+  }
+  return path;
+}
+
 function bandGridChart(svg, rows, mode) {
   const width = 760;
-  const height = 260;
-  const pad = { left: 52, right: 18, top: 20, bottom: 36 };
+  const height = 520;
+  const pad = { left: 58, right: 24, top: 32, bottom: 42 };
   const gridRows = rows.filter((row) => row.type === "grid");
   const latitudes = [...new Set(gridRows.map((row) => row.latitude))].sort((a, b) => b - a);
   const longitudes = [...new Set(gridRows.map((row) => row.longitude))].sort((a, b) => a - b);
   const xValues = mode === "latitude" ? longitudes : [...latitudes].reverse();
   const yValues = mode === "latitude" ? latitudes : longitudes;
-  const cellW = (width - pad.left - pad.right) / Math.max(1, xValues.length);
-  const cellH = (height - pad.top - pad.bottom) / Math.max(1, yValues.length);
+  const availableW = width - pad.left - pad.right;
+  const availableH = height - pad.top - pad.bottom;
+  const cell = Math.floor(Math.min(availableW / Math.max(1, xValues.length), availableH / Math.max(1, yValues.length)));
+  const cellW = Math.max(1, cell);
+  const cellH = Math.max(1, cell);
+  const originX = pad.left + (availableW - cellW * xValues.length) / 2;
+  const originY = pad.top + (availableH - cellH * yValues.length) / 2;
   const rowByCoord = new Map(gridRows.map((row) => [`${row.latitude},${row.longitude}`, row]));
   const cells = yValues.flatMap((yValue, yIndex) => xValues.map((xValue, xIndex) => {
     const lat = mode === "latitude" ? yValue : xValue;
     const lon = mode === "latitude" ? xValue : yValue;
     const row = rowByCoord.get(`${lat},${lon}`);
     if (!row) return "";
-    return `<rect x="${pad.left + xIndex * cellW}" y="${pad.top + yIndex * cellH}" width="${Math.max(1, cellW)}" height="${Math.max(1, cellH)}" fill="${colorFor(row)}" opacity="0.9"><title>${lat} lat, ${lon} lon: ${bandName(row)}</title></rect>`;
+    return `<rect x="${originX + xIndex * cellW}" y="${originY + yIndex * cellH}" width="${cellW}" height="${cellH}" fill="${colorFor(row)}" opacity="0.9"><title>${lat} lat, ${lon} lon: ${bandName(row)}</title></rect>`;
   })).join("");
-  const yLabels = yValues.map((value, i) => i % 2 === 0 ? `<text x="${pad.left - 7}" y="${pad.top + i * cellH + cellH * 0.7}" text-anchor="end" font-size="10" fill="#596675">${value}</text>` : "").join("");
-  const xLabels = xValues.map((value, i) => i % 4 === 0 ? `<text x="${pad.left + i * cellW}" y="${height - 12}" text-anchor="middle" font-size="10" fill="#596675">${value}</text>` : "").join("");
+  const yLabels = yValues.map((value, i) => i % 2 === 0 ? `<text x="${originX - 7}" y="${originY + i * cellH + cellH * 0.7}" text-anchor="end" font-size="10" fill="#596675">${value}</text>` : "").join("");
+  const xLabels = xValues.map((value, i) => i % 3 === 0 ? `<text x="${originX + i * cellW + cellW * 0.5}" y="${originY + cellH * yValues.length + 18}" text-anchor="middle" font-size="10" fill="#596675">${value}</text>` : "").join("");
   const title = mode === "latitude" ? "Latitude bands across all longitudes" : "Longitude bands across all latitudes";
   svg.innerHTML = `
     <text x="${pad.left}" y="13" font-size="12" fill="#18212f">${title}</text>
@@ -1089,8 +1182,9 @@ function renderCalendar() {
 }
 
 function renderLegend() {
-  if (state.mapView === "first") {
-    const bands = [...FIRST_BANDS].reverse().map((band) => `<span><i style="background:${band.color}; border:1px solid #94a3b8"></i>${band.label}</span>`).join("");
+  if (isFirstVisibilityView()) {
+    const sourceBands = state.mapView === "firstOdeh" ? ODEH_FIRST_BANDS : FIRST_BANDS;
+    const bands = [...sourceBands].reverse().map((band) => `<span><i style="background:${band.color}; border:1px solid #94a3b8"></i>${band.label}</span>`).join("");
     const masks = Object.values(FIRST_MASKS).map((mask) => `<span><i style="background:${mask.color}"></i>${mask.label}</span>`).join("");
     el("legend").innerHTML = `${bands}${masks}`;
     return;
@@ -1107,13 +1201,15 @@ function renderMapText() {
     instant: "Selected Date + Time Visibility",
     day: "Best Visibility Across Selected Date",
     slice: "Selected Date + Time Across All Lat/Lon",
-    first: "First Visibility Yallop Map",
+    firstYallop: "Moonsighting Australia / Yallop First Visibility",
+    firstOdeh: "ICOP / Odeh First Visibility",
   };
   const subtitles = {
     instant: "Country, state, capital city, major city, and grid points at the selected instant.",
     day: "Each point shows its best visibility band across the selected UTC date from 00:00 to 24:00.",
     slice: "All precomputed country, state, capital, city, and 15 degree grid points at the selected UTC instant.",
-    first: "Our Van Gent-style layer: Yallop at sunset plus 4/9 of the local sunset-to-moonset interval, with conjunction and moonset masks.",
+    firstYallop: "Yallop q at sunset plus 4/9 of the local sunset-to-moonset interval, with conjunction and moonset masks.",
+    firstOdeh: "Odeh V computed at the same first-visibility best time and masks, so the map is comparable while using Odeh bands.",
   };
   el("mapTitle").textContent = titles[state.mapView];
   el("mapSubtitle").textContent = subtitles[state.mapView];
